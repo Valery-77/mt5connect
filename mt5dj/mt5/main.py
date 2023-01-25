@@ -1,4 +1,6 @@
 import MetaTrader5 as mt
+from datetime import datetime
+from math import fabs, floor
 
 send_retcodes = {
     10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
@@ -62,25 +64,26 @@ MT2_SERVER = 'OpenInvestments-Demo'
 
 def init_mt(login, server, password, path, need_login=False):
     if mt.initialize(login=login, server=server, password=password, path=path):
+        print(f'Initialize account {login} : {datetime.now()}')
         if need_login:
             if not mt.login(login=login, password=password, server=server):
                 print('Login NO', mt.last_error())
     else:
-        print("Init NO", mt.last_error())
+        print(f'Initialize account {login} : {datetime.now()} : ERROR >', mt.last_error())
 
 
 def send_position(symbol, deal_type, lot, sender_ticket, magic=0, tp=0, sl=0, deviation=20):
     point = mt.symbol_info(symbol).point
 
     price = tp_in = sl_in = 0.0
-    if deal_type == 1:  # BUY
+    if deal_type == 0:  # BUY
         deal_type = mt.ORDER_TYPE_BUY
         price = mt.symbol_info_tick(symbol).ask
         if tp != 0:
             tp_in = price + tp * point
         if sl != 0:
             sl_in = price - sl * point
-    elif deal_type == 0:  # SELL
+    elif deal_type == 1:  # SELL
         deal_type = mt.ORDER_TYPE_SELL
         price = mt.symbol_info_tick(symbol).bid
         if tp != 0:
@@ -110,22 +113,59 @@ def send_position(symbol, deal_type, lot, sender_ticket, magic=0, tp=0, sl=0, de
 init_mt(MT1_LOGIN, MT1_SERVER, MT1_PASS, MT1_PATH)
 positions_sender = mt.positions_get()
 if len(positions_sender) > 0:
+    print(f'    Account {MT1_LOGIN} have {len(positions_sender)} opened positions')
     init_mt(MT2_LOGIN, MT2_SERVER, MT2_PASS, MT2_PATH)
     positions_receiver = mt.positions_get()
     for pos_snd in positions_sender:
         position_s = pos_snd._asdict()
+        # print((position_s))
+        tp_p = sl_p = 0
+        if position_s["tp"] > 0:
+            tp_p = floor(fabs(position_s['price_open'] - position_s['tp']) / mt.symbol_info(position_s['symbol']).point)
+        if position_s["sl"] > 0:
+            sl_p = floor(fabs(position_s['price_open'] - position_s['sl']) / mt.symbol_info(position_s['symbol']).point)
+        report = f'    In account {MT1_LOGIN} position {position_s["ticket"]} / {position_s["symbol"]} ' \
+                 f'/ lot: {position_s["volume"]} / open price: {position_s["price_open"]} / ' \
+                 f'tp: {position_s["tp"]} ({tp_p} pips) / sl: {position_s["sl"]} ({sl_p} pips) '
         skip_this = False
+        existed_position = 0
         for pos_rec in positions_receiver:
             position_r = pos_rec._asdict()
-            if position_s['ticket'] == int(position_r['comment']):
-                skip_this = True
-                break
+            try:
+                if position_s['ticket'] == int(position_r['comment']):
+                    existed_position = position_r
+                    skip_this = True
+                    break
+            except ValueError:
+                continue
         if not skip_this:
             res = send_position(symbol=position_s['symbol'], deal_type=position_s['type'], lot=position_s['volume'],
-                                sender_ticket=position_s['ticket'], magic=position_s['magic'], tp=0, sl=0)
-            print(send_retcodes[res._asdict()['retcode']][1])
+                                sender_ticket=position_s['ticket'], magic=position_s['magic'], tp=tp_p, sl=sl_p)
+            response = res._asdict()
+            rsp_req = response["request"]._asdict()
+            tp_p = sl_p = 0
+            if rsp_req["tp"] > 0:
+                tp_p = floor(fabs(response['price'] - rsp_req['tp']) / mt.symbol_info(rsp_req['symbol']).point)
+            if rsp_req["sl"] > 0:
+                sl_p = floor(fabs(response['price'] - rsp_req['sl']) / mt.symbol_info(rsp_req['symbol']).point)
+            print(report, f'\n\t\t->\t {send_retcodes[response["retcode"]][1]}',
+                  f'in account {MT2_LOGIN} position {response["order"]} /',
+                  f'{rsp_req["symbol"]} / lot: {rsp_req["volume"]} / open price: {response["price"]} /',
+                  f'tp: {rsp_req["tp"]} ({tp_p} pips) / sl: {rsp_req["sl"]} ({sl_p} pips) ')
         else:
-            print('Position with ticket:', position_s['ticket'], 'exist in receiver')
+            tp_p = sl_p = 0
+            if existed_position["tp"] > 0:
+                tp_p = floor(
+                    fabs(existed_position['price_open'] - existed_position['tp']) / mt.symbol_info(
+                        position_s['symbol']).point)
+            if existed_position["sl"] > 0:
+                sl_p = floor(
+                    fabs(existed_position['price_open'] - existed_position['sl']) / mt.symbol_info(
+                        position_s['symbol']).point)
+            print(report, f'\n\t\t->\talready exist : in account {MT2_LOGIN} position {existed_position["ticket"]} /',
+                  f'{existed_position["symbol"]} / lot: {existed_position["volume"]} /',
+                  f'open price: {existed_position["price_open"]} /',
+                  f'tp: {existed_position["tp"]} ({tp_p} pips) / sl: {existed_position["sl"]} ({sl_p} pips) ')
 else:
-    print('Nothing to add')
+    print(f'    Account {MT1_LOGIN} have {len(positions_sender)} opened positions')
 mt.shutdown()
