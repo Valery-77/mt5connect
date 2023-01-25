@@ -1,6 +1,7 @@
 import MetaTrader5 as mt
 from datetime import datetime
 from math import fabs, floor
+from win32gui import PostMessage, GetAncestor, FindWindow
 
 send_retcodes = {
     10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
@@ -62,6 +63,15 @@ MT1_SERVER = 'OpenInvestments-Demo'
 MT2_SERVER = 'OpenInvestments-Demo'
 
 
+def enable_algotrading():
+    if not mt.terminal_info()._asdict()['trade_allowed']:
+        mt_wmcmd_experts = 32851
+        wm_command = 0x0111
+        ga_root = 2
+        terminal_handle = FindWindow('MetaQuotes::MetaTrader::5.00', None)
+        PostMessage(GetAncestor(terminal_handle, ga_root), wm_command, mt_wmcmd_experts, 0)
+
+
 def init_mt(login, server, password, path, need_login=False):
     if mt.initialize(login=login, server=server, password=password, path=path):
         print(f'Initialize account {login} : {datetime.now()}')
@@ -115,10 +125,10 @@ positions_sender = mt.positions_get()
 if len(positions_sender) > 0:
     print(f'    Account {MT1_LOGIN} have {len(positions_sender)} opened positions')
     init_mt(MT2_LOGIN, MT2_SERVER, MT2_PASS, MT2_PATH)
+    enable_algotrading()
     positions_receiver = mt.positions_get()
     for pos_snd in positions_sender:
         position_s = pos_snd._asdict()
-        # print((position_s))
         tp_p = sl_p = 0
         if position_s["tp"] > 0:
             tp_p = floor(fabs(position_s['price_open'] - position_s['tp']) / mt.symbol_info(position_s['symbol']).point)
