@@ -1,5 +1,5 @@
 import MetaTrader5 as mt
-from datetime import datetime
+from datetime import datetime, timedelta
 from math import fabs
 from win32gui import PostMessage, GetAncestor, FindWindow
 
@@ -79,27 +79,33 @@ MT2_PASS = 'weax5szp'
 MT1_SERVER = 'OpenInvestments-Demo'
 MT2_SERVER = 'OpenInvestments-Demo'
 
-MAGIC = 0
+MAGIC = 555555555
 DEVIATION = 20
-START_DATE = datetime(2020, 1, 1)
+START_DATE = datetime(2023, 2, 1, 0, 0, 0)
+
+output_report = {'code': 0, 'message': 'null'}
 
 input_investment_size = 1000
 input_volume_multiplier = 1.0
 input_check_stop_limit_in_percent = True
-input_stop_limit = 20
+input_stop_limit = 20.0
 
 
-def get_pips_tp(position):
+def get_pips_tp(position, price=None):
+    if price is None:
+        price = position.price_open
     result = 0.0
     if position.tp > 0:
-        result = round(fabs(position.price_open - position.tp) / mt.symbol_info(position.symbol).point)
+        result = round(fabs(price - position.tp) / mt.symbol_info(position.symbol).point)
     return result
 
 
-def get_pips_sl(position):
+def get_pips_sl(position, price=None):
+    if price is None:
+        price = position.price_open
     result = 0.0
     if position.sl > 0:
-        result = round(fabs(position.price_open - position.sl) / mt.symbol_info(position.symbol).point)
+        result = round(fabs(price - position.sl) / mt.symbol_info(position.symbol).point)
     return result
 
 
@@ -121,22 +127,42 @@ def get_positions_profit(positions: list):
     return result
 
 
+def get_history_profit(positions: list):
+    result = 0
+    own_positions = []
+    try:
+        if len(positions) > 0:
+            for pos in positions:
+                if pos.magic == MAGIC:
+                    linked_pos = mt.history_deals_get(position=pos.position_id)
+                    for lp in linked_pos:
+                        own_positions.append(lp)
+        if len(own_positions) > 0:
+            for pos in own_positions:
+                if pos.type < 2:
+                    result += pos.profit  # + pos.commission
+    except AttributeError:
+        print('ERROR in get_history_profit() : wrong positions list')
+        result = None
+    return result
+
+
 # stop limits
 def check_stop_limits(start_balance=input_investment_size, limit_size=input_stop_limit, calc_limit_in_percent=True):
     # CHECK HISTORY POSITIONS
     date_from = START_DATE
-    date_to = datetime.now()
-    history_positions = mt.history_deals_get(date_from, date_to)
-    history_profit = get_positions_profit(history_positions)
+    date_to = datetime.today().replace(microsecond=0) + timedelta(days=1)
+    history_deals = mt.history_deals_get(date_from, date_to)
+    history_profit = get_history_profit(history_deals)
     # CHECK CURRENT POSITIONS
     active_positions = mt.positions_get()
     current_profit = get_positions_profit(active_positions)
     # SUMM TOTAL PROFIT
-    if not history_profit or not current_profit:
+    if history_profit is None or current_profit is None:
         return
     close_all_positions = False
     total_profit = history_profit + current_profit
-    print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', START_DATE, ':', round(total_profit, 2),
+    print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', START_DATE, ':', round(total_profit, 3),
           'USD')
     # CHECK LOST SIZE FOR CLOSE ALL
     if total_profit < 0:
@@ -153,7 +179,8 @@ def check_stop_limits(start_balance=input_investment_size, limit_size=input_stop
             for act_pos in active_positions:
                 if act_pos.magic == MAGIC:
                     close_position(act_pos)
-            exit()
+            # exit()
+
 
 # simple multiplier
 def get_deals_volume(volume=1.0, multiplier=input_volume_multiplier):
@@ -162,7 +189,7 @@ def get_deals_volume(volume=1.0, multiplier=input_volume_multiplier):
 
 def enable_algotrading():
     try:
-        if not mt.terminal_info()._asdict()['trade_allowed']:
+        if not mt.terminal_info().trade_allowed:
             mt_wmcmd_experts = 32851
             wm_command = 0x0111
             ga_root = 2
@@ -173,7 +200,7 @@ def enable_algotrading():
         exit()
 
 
-def init_mt(login, server, password, path, need_login=False):  # timeout default = 60_000
+def init_mt(login, server, password, path, need_login=False):
     if mt.initialize(login=login, server=server, password=password, path=path, timeout=TIMEOUT_INIT):
         print(f'Initialize account {login} : {datetime.now()}')
         if need_login:
@@ -186,7 +213,6 @@ def init_mt(login, server, password, path, need_login=False):  # timeout default
 
 def open_position(symbol, deal_type, lot, sender_ticket, tp=0, sl=0):
     point = mt.symbol_info(symbol).point
-
     price = tp_in = sl_in = 0.0
     if deal_type == 0:  # BUY
         deal_type = mt.ORDER_TYPE_BUY
@@ -202,7 +228,6 @@ def open_position(symbol, deal_type, lot, sender_ticket, tp=0, sl=0):
             tp_in = price - tp * point
         if sl != 0:
             sl_in = price + sl * point
-
     request = {
         "action": mt.TRADE_ACTION_DEAL,
         "symbol": symbol,
@@ -217,7 +242,6 @@ def open_position(symbol, deal_type, lot, sender_ticket, tp=0, sl=0):
         "type_time": mt.ORDER_TIME_GTC,
         "type_filling": mt.ORDER_FILLING_RETURN,
     }
-
     result = mt.order_send(request)
     return result
 
@@ -232,8 +256,8 @@ def close_position(position):
         'type': mt.ORDER_TYPE_BUY if position.type == 1 else mt.ORDER_TYPE_SELL,
         'price': tick.ask if position.type == 1 else tick.bid,
         'deviation': DEVIATION,
-        'magic:': position.magic,
-        'comment': '',
+        'magic:': MAGIC,
+        'comment': position.comment,
         'type_tim': mt.ORDER_TIME_GTC,
         'type_filing': mt.ORDER_FILLING_IOC
     }
@@ -243,54 +267,53 @@ def close_position(position):
 
 def main():
     init_mt(MT1_LOGIN, MT1_SERVER, MT1_PASS, MT1_PATH)
-    positions_sender = mt.positions_get()
-    if len(positions_sender) > 0:
-        print(f'    Account {MT1_LOGIN} have {len(positions_sender)} opened positions')
+    lieder_positions = mt.positions_get()
+    if len(lieder_positions) > 0:
+        print(f'    Account {MT1_LOGIN} have {len(lieder_positions)} opened positions')
         init_mt(MT2_LOGIN, MT2_SERVER, MT2_PASS, MT2_PATH)
         check_stop_limits(calc_limit_in_percent=input_check_stop_limit_in_percent)
         enable_algotrading()
-        positions_receiver = mt.positions_get()
-        for pos_snd in positions_sender:
-            sender_tp = get_pips_tp(pos_snd)
-            sender_sl = get_pips_sl(pos_snd)
-            report = f'    In account {MT1_LOGIN} position {pos_snd.ticket} / {pos_snd.symbol} ' \
-                     f'/ lot: {pos_snd.volume} / open price: {pos_snd.price_open} / ' \
-                     f'tp: {pos_snd.tp} ({sender_tp} pips) / sl: {pos_snd.sl} ({sender_sl} pips) '
+        investor_positions = mt.positions_get()
+        for pos_lid in lieder_positions:
+            inv_tp = get_pips_tp(pos_lid)
+            inv_sl = get_pips_sl(pos_lid)
+            # rep_str = f'    In account {MT1_LOGIN} position {pos_lid.ticket} / {pos_lid.symbol} ' \
+            #           f'/ lot: {pos_lid.volume} / open price: {pos_lid.price_open} / ' \
+            #           f'tp: {pos_lid.tp} ({inv_tp} pips) / sl: {pos_lid.sl} ({inv_sl} pips) '
             position_exist = False
             existed_position = 0
-            for pos_rec in positions_receiver:
+            for pos_inv in investor_positions:
                 try:
-                    if pos_snd.ticket == int(pos_rec.comment):
-                        existed_position = pos_rec
+                    if pos_lid.ticket == int(pos_inv.comment):
+                        existed_position = pos_inv
                         position_exist = True
                         break
                 except ValueError:
                     continue
             if not position_exist:  # POSITION NOT EXIST
-                res = open_position(symbol=pos_snd.symbol, deal_type=pos_snd.type,
-                                    lot=get_deals_volume(pos_snd.volume, input_volume_multiplier),
-                                    sender_ticket=pos_snd.ticket, tp=sender_tp, sl=sender_sl)
-                response = res._asdict()
-                rsp_req = response["request"]._asdict()
-                receiver_tp = receiver_sl = 0
-                if rsp_req["tp"] > 0:
-                    receiver_tp = round(
-                        fabs(response['price'] - rsp_req['tp']) / mt.symbol_info(rsp_req['symbol']).point)
-                if rsp_req["sl"] > 0:
-                    receiver_sl = round(
-                        fabs(response['price'] - rsp_req['sl']) / mt.symbol_info(rsp_req['symbol']).point)
-                print(report, f'\n\t\t->\t {send_retcodes[response["retcode"]][1]}',
-                      f'in account {MT2_LOGIN} position {response["order"]} /',
-                      f'{rsp_req["symbol"]} / lot: {rsp_req["volume"]} / open price: {response["price"]} /',
-                      f'tp: {rsp_req["tp"]} ({receiver_tp} pips) / sl: {rsp_req["sl"]} ({receiver_sl} pips) ')
+                response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type,
+                                         lot=get_deals_volume(pos_lid.volume, input_volume_multiplier),
+                                         sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+                # rsp_req = response.request
+                # inv_tp = get_pips_tp(rsp_req, rsp_req.price)
+                # inv_sl = get_pips_sl(rsp_req, rsp_req.price)
+                # print(rep_str, f'\n\t\t->\t {send_retcodes[response.retcode][1]}',
+                #       f'in account {MT2_LOGIN} position {response.order} /',
+                #       f'{rsp_req.symbol} / lot: {rsp_req.volume} / open price: {response.price} /',
+                #       f'tp: {rsp_req.tp} ({inv_tp} pips) / sl: {rsp_req.sl} ({inv_sl} pips) ')
+                output_report['code'] = response.retcode
+                output_report['message'] = send_retcodes[response.retcode][1]
+                print(output_report)
             else:  # POSITION ALREADY EXIST
-                receiver_tp = get_pips_tp(existed_position)
-                receiver_sl = get_pips_sl(existed_position)
-                print(report,
-                      f'\n\t\t->\t already exist : in account {MT2_LOGIN} position {existed_position.ticket} /',
-                      f'{existed_position.symbol} / lot: {existed_position.volume} /',
-                      f'open price: {existed_position.price_open} /',
-                      f'tp: {existed_position.tp} ({receiver_tp} pips) / sl: {existed_position.sl} ({receiver_sl} pips)')
+                # inv_tp = get_pips_tp(existed_position)
+                # inv_sl = get_pips_sl(existed_position)
+                output_report['message'] = 'Уже открыта'
+                print(output_report)
+                # print(rep_str,
+                #       f'\n\t\t->\t already exist : in account {MT2_LOGIN} position {existed_position.ticket} /',
+                #       f'{existed_position.symbol} / lot: {existed_position.volume} /',
+                #       f'open price: {existed_position.price_open} /',
+                #       f'tp: {existed_position.tp} ({inv_tp} pips) / sl: {existed_position.sl} ({inv_sl} pips)')
     else:
         print(f'    Account {MT1_LOGIN} no have opened positions')
     mt.shutdown()
