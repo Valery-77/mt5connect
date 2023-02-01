@@ -99,7 +99,7 @@ investor_accounts = (  # данные иневсторов для инициал
 # MT1_SERVER = 'OpenInvestments-Demo'
 # MT2_SERVER = 'OpenInvestments-Demo'
 
-MAGIC = 555555555  # идентификатор эксперта
+MAGIC = 5555555552  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
 START_DATE = datetime(2022, 2, 1, 0, 0, 0)  # начальная время с которого ведется расчет по истории
 
@@ -109,8 +109,8 @@ output_report = []  # сюда выводится отчет
 input_investment_size = 10000  # стартовый депозит инвестора
 input_get_multiplier_for_balance = True  # False  если считаем множитель по средствам
 input_volume_multiplier = 10.0  # множитель
-input_check_stop_limit_in_percent = True  # False если считаем стоп-лимит по абсолютному значению
-input_stop_limit = 20.0  # значение стоп-лимита (% или USD)
+input_check_stop_limit_in_percent = False  # False если считаем стоп-лимит по абсолютному значению
+input_stop_limit = 0.05  # значение стоп-лимита (% или USD)
 
 
 #  расчет Тейк-профит в пунктах
@@ -200,6 +200,7 @@ def check_stop_limits(start_balance=input_investment_size, limit_size=input_stop
             if fabs(total_profit) >= limit_size:
                 close_all_positions = True
         # CLOSE ALL POSITIONS
+        active_positions = mt.positions_get()
         if close_all_positions:
             print('     Закрытие всех позиций по условию убытка')
             for act_pos in active_positions:
@@ -292,7 +293,7 @@ def close_position(position):
         'price': tick.ask if position.type == 1 else tick.bid,
         'deviation': DEVIATION,
         'magic:': MAGIC,
-        'comment': position.comment,
+        'comment': 'CLOSED_BY_EXPERT',  # position.comment,
         'type_tim': mt.ORDER_TIME_GTC,
         'type_filing': mt.ORDER_FILLING_IOC
     }
