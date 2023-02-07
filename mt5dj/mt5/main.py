@@ -76,7 +76,7 @@ lieder_account = {
     'password': 'bsccvba1',
     'server': 'OpenInvestments-Demo'
 }  # данные лидера для инициализации
-investor_accounts = (  # данные иневсторов для инициализации
+investor_accounts = (  # данные инвесторов для инициализации
     {
         'path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe',
         'login': 805061,
@@ -299,6 +299,16 @@ def close_position(position):
     }
     result = mt.order_send(request)
     return result
+
+
+def close_all_positions(investor_data):
+    init_mt(init_data=investor_data)
+    positions = mt.positions_get()
+    if len(positions) > 0:
+        for position in positions:
+            if position.magic == MAGIC:
+                close_position(position)
+    mt.shutdown()
 
 
 def main():
