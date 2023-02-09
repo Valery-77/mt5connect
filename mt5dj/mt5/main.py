@@ -2,6 +2,7 @@ import MetaTrader5 as mt
 from datetime import datetime, timedelta
 from math import fabs
 from win32gui import PostMessage, GetAncestor, FindWindow
+import asyncio
 
 send_retcodes = {
     10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
@@ -99,22 +100,25 @@ investor_accounts = (  # данные инвесторов для инициал
 # MT1_SERVER = 'OpenInvestments-Demo'
 # MT2_SERVER = 'OpenInvestments-Demo'
 
-MAGIC = 5555555552  # идентификатор эксперта
+MAGIC = 5555555553  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
-START_DATE = datetime(2022, 2, 1, 0, 0, 0)  # начальная время с которого ведется расчет по истории
+START_DATE = datetime(2022, 2, 1, 0, 0, 0)  # начальное время с которого ведется расчет по истории
 
 output_report = []  # сюда выводится отчет
 # report_stamp = {'id': -1, 'code': 0, 'message': 'null'}
+lieder_balance = 0  # default var
+lieder_positions = []  # default var
+trading_event = asyncio.Event()  # init async event
 
 input_investment_size = 10000  # стартовый депозит инвестора
 input_get_multiplier_for_balance = True  # False  если считаем множитель по средствам
 input_volume_multiplier = 10.0  # множитель
-input_check_stop_limit_in_percent = False  # False если считаем стоп-лимит по абсолютному значению
-input_stop_limit = 0.05  # значение стоп-лимита (% или USD)
+input_check_stop_limit_in_percent = True  # False если считаем стоп-лимит по абсолютному значению
+input_stop_limit = 20.05  # значение стоп-лимита (% или USD)
 
 
-#  расчет Тейк-профит в пунктах
 def get_pips_tp(position, price=None):
+    """Расчет Тейк-профит в пунктах"""
     if price is None:
         price = position.price_open
     result = 0.0
@@ -123,8 +127,8 @@ def get_pips_tp(position, price=None):
     return result
 
 
-#  расчет Стоп-лосс в пунктах
 def get_pips_sl(position, price=None):
+    """Расчет Стоп-лосс в пунктах"""
     if price is None:
         price = position.price_open
     result = 0.0
@@ -133,8 +137,8 @@ def get_pips_sl(position, price=None):
     return result
 
 
-#  расчет прибыли текущих позиций
 def get_positions_profit():
+    """Расчет прибыли текущих позиций"""
     active_positions = mt.positions_get()
     result = 0
     own_positions = []
@@ -153,8 +157,8 @@ def get_positions_profit():
     return result
 
 
-#  расчет прибыли по истории
 def get_history_profit():
+    """Расчет прибыли по истории"""
     date_from = START_DATE
     date_to = datetime.today().replace(microsecond=0) + timedelta(days=1)
     history_deals = mt.history_deals_get(date_from, date_to)
@@ -177,16 +181,14 @@ def get_history_profit():
     return result
 
 
-# проверка стоп-лимита по проценту либо абсолютному показателю
 def check_stop_limits(start_balance=input_investment_size, limit_size=input_stop_limit, calc_limit_in_percent=True):
-    # CHECK HISTORY POSITIONS
+    """Проверка стоп-лимита по проценту либо абсолютному показателю"""
     history_profit = get_history_profit()
-    # CHECK CURRENT POSITIONS
     current_profit = get_positions_profit()
     # SUMM TOTAL PROFIT
     if history_profit is None or current_profit is None:
         return
-    close_all_positions = False
+    close_positions = False
     total_profit = history_profit + current_profit
     print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', START_DATE, ':', round(total_profit, 3),
           'USD')
@@ -195,13 +197,13 @@ def check_stop_limits(start_balance=input_investment_size, limit_size=input_stop
         if calc_limit_in_percent:
             current_percent = fabs(total_profit / start_balance) * 100
             if current_percent >= limit_size:
-                close_all_positions = True
+                close_positions = True
         else:
             if fabs(total_profit) >= limit_size:
-                close_all_positions = True
+                close_positions = True
         # CLOSE ALL POSITIONS
         active_positions = mt.positions_get()
-        if close_all_positions:
+        if close_positions:
             print('     Закрытие всех позиций по условию убытка')
             for act_pos in active_positions:
                 if act_pos.magic == MAGIC:
@@ -209,18 +211,18 @@ def check_stop_limits(start_balance=input_investment_size, limit_size=input_stop
             # exit()
 
 
-# расчет множителя
-def get_deals_volume(lieder_volume=1.0, lieder_balance=0.0, multiplier=input_volume_multiplier, get_for_balance=True):
+def get_deals_volume(lieder_volume=1.0, lieder_balance_value=0.0, multiplier=input_volume_multiplier, get_for_balance=True):
+    """Расчет множителя"""
     ext_k: float
     if get_for_balance:
-        ext_k = (input_investment_size + get_history_profit()) / lieder_balance
+        ext_k = (input_investment_size + get_history_profit()) / lieder_balance_value
     else:
-        ext_k = (input_investment_size + get_history_profit() + get_positions_profit()) / lieder_balance
+        ext_k = (input_investment_size + get_history_profit() + get_positions_profit()) / lieder_balance_value
     return round(lieder_volume * multiplier * ext_k, 4)
 
 
-# принудитеьное включение режима Аготрейдинга на терминале
 def enable_algotrading():
+    """Принудительное включение режима Аготрейдинга на терминале"""
     try:
         if not mt.terminal_info().trade_allowed:
             mt_wmcmd_experts = 32851
@@ -233,21 +235,22 @@ def enable_algotrading():
         exit()
 
 
-# инициализация терминала
 def init_mt(init_data, need_login=False):
+    """Инициализация терминала"""
     if mt.initialize(login=init_data['login'], server=init_data['server'], password=init_data['password'],
                      path=init_data['path'], timeout=TIMEOUT_INIT):
-        print(f'Initialize account {init_data["login"]} : {datetime.now()}')
+        # print(f'INVESTOR account {init_data["login"]} : {datetime.now()}')
         if need_login:
             if not mt.login(login=init_data['login'], server=init_data['server'], password=init_data['password']):
                 print('Login ERROR', mt.last_error())
     else:
-        print(f'Initialize account {init_data["login"]} : {datetime.now()} : ERROR', mt.last_error(),
+        print(f'>>>>> account {init_data["login"]} : {datetime.now()} : ERROR', mt.last_error(),
               f': timeout = {TIMEOUT_INIT}')
         exit()
 
 
 def open_position(symbol, deal_type, lot, sender_ticket, tp=0, sl=0):
+    """Открытие позиции"""
     point = mt.symbol_info(symbol).point
     price = tp_in = sl_in = 0.0
     if deal_type == 0:  # BUY
@@ -283,6 +286,7 @@ def open_position(symbol, deal_type, lot, sender_ticket, tp=0, sl=0):
 
 
 def close_position(position):
+    """Закрытие указанной позиции"""
     tick = mt.symbol_info_tick(position.symbol)
     request = {
         'action': mt.TRADE_ACTION_DEAL,
@@ -301,7 +305,8 @@ def close_position(position):
     return result
 
 
-def close_all_positions(investor_data):
+def force_close_all_positions(investor_data):
+    """Принудительное закрытие всех позиций аккаунта"""
     init_mt(init_data=investor_data)
     positions = mt.positions_get()
     if len(positions) > 0:
@@ -311,63 +316,105 @@ def close_all_positions(investor_data):
     mt.shutdown()
 
 
-def main():
-    init_mt(init_data=lieder_account)
-    lieder_balance = mt.account_info().balance if input_get_multiplier_for_balance else mt.account_info().equity
-    lieder_positions = mt.positions_get()
-    print(f'    Account {lieder_account["login"]} have {len(lieder_positions)} opened positions')
-    if len(lieder_positions) > 0:
-        for investor in investor_accounts:
-            init_mt(investor)
-            check_stop_limits(calc_limit_in_percent=input_check_stop_limit_in_percent)
-            enable_algotrading()
-            investor_positions = mt.positions_get()
-            for pos_lid in lieder_positions:
-                inv_tp = get_pips_tp(pos_lid)
-                inv_sl = get_pips_sl(pos_lid)
-                # rep_str = f'    In account {MT1_LOGIN} position {pos_lid.ticket} / {pos_lid.symbol} ' \
-                #           f'/ lot: {pos_lid.volume} / open price: {pos_lid.price_open} / ' \
-                #           f'tp: {pos_lid.tp} ({inv_tp} pips) / sl: {pos_lid.sl} ({inv_sl} pips) '
-                position_exist = False
-                existed_position = 0
-                for pos_inv in investor_positions:
-                    try:
-                        if pos_lid.ticket == int(pos_inv.comment):
-                            existed_position = pos_inv
-                            position_exist = True
-                            break
-                    except ValueError:
-                        continue
-                if not position_exist:  # POSITION NOT EXIST
-                    volume = get_deals_volume(lieder_volume=pos_lid.volume, lieder_balance=lieder_balance,
-                                              multiplier=input_volume_multiplier,
-                                              get_for_balance=input_get_multiplier_for_balance)
-                    response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
-                                             sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
-                    # rsp_req = response.request
-                    # inv_tp = get_pips_tp(rsp_req, rsp_req.price)
-                    # inv_sl = get_pips_sl(rsp_req, rsp_req.price)
-                    # print(rep_str, f'\n\t\t->\t {send_retcodes[response.retcode][1]}',
-                    #       f'in account {MT2_LOGIN} position {response.order} /',
-                    #       f'{rsp_req.symbol} / lot: {rsp_req.volume} / open price: {response.price} /',
-                    #       f'tp: {rsp_req.tp} ({inv_tp} pips) / sl: {rsp_req.sl} ({inv_sl} pips) ')
-                    rpt = {'id': investor_accounts.index(investor), 'code': response.retcode,
-                           'message': send_retcodes[response.retcode][1]}
-                    output_report.append(rpt)
-                # else:  # POSITION ALREADY EXIST
-                # inv_tp = get_pips_tp(existed_position)
-                # inv_sl = get_pips_sl(existed_position)
-                # output_report['message'] = 'Уже открыта'
-                # print(output_report)
-                # print(rep_str,
-                #       f'\n\t\t->\t already exist : in account {MT2_LOGIN} position {existed_position.ticket} /',
-                #       f'{existed_position.symbol} / lot: {existed_position.volume} /',
-                #       f'open price: {existed_position.price_open} /',
-                #       f'tp: {existed_position.tp} ({inv_tp} pips) / sl: {existed_position.sl} ({inv_sl} pips)')
-    else:
-        print(f'    Account {lieder_account["login"]} no have opened positions')
+def close_positions_by_lieder(positions_lieder, positions_investor):
+    """Закрытие позиций инвестора, которые закрылись у лидера"""
+    non_existed_positions = []
+    for ip in positions_investor:
+        position_exist = False
+        for lp in positions_lieder:
+            if int(ip.comment) == lp.ticket:
+                position_exist = True
+                break
+        if not position_exist:
+            non_existed_positions.append(ip)
+    for pos in non_existed_positions:
+        print('     close position:', pos.comment)
+        close_position(pos)
+
+
+def is_position_exist_in_list(position, list_positions, check_for_comment=False):
+    if len(list_positions) <= 0:
+        return False
+    try:
+        for pos in list_positions:
+            value = int(pos.comment) if check_for_comment else pos.ticket
+            if position.ticket == value:
+                return True
+    except ValueError:
+        return False
+    return False
+
+
+# def is_positions_changed(prev_positions, curr_positions):
+#     prev_len = len(prev_positions)
+#     curr_len = len(curr_positions)
+#     if prev_len != curr_len:
+#         return True
+#     for cur in curr_positions:
+#         if not is_position_exist_in_list(cur, prev_positions):
+#             return True
+#     return False
+
+# ----------------------------------------------------------------------------  async
+async def execute_lieder(sleep_size=5):
+    global lieder_balance
+    global lieder_positions
+    while True:
+        init_mt(init_data=lieder_account)
+        lieder_balance = mt.account_info().balance if input_get_multiplier_for_balance else mt.account_info().equity
+        previous_lieder_positions = lieder_positions
+        lieder_positions = mt.positions_get()
+        mt.shutdown()
+        if True:  # is_positions_changed(previous_lieder_positions, lieder_positions):
+            if len(lieder_positions) > 0:
+                print(f'LIEDER {lieder_account["login"]} have {len(lieder_positions)} positions',
+                      datetime.now().time())
+                await asyncio.sleep(sleep_size)
+                trading_event.set()
+            else:
+                print('NO LIEDER positions')
+                await asyncio.sleep(sleep_size)
+        else:
+            print('NO CHANGE in LIEDER positions')
+            await asyncio.sleep(sleep_size)
+
+
+async def execute_investor(investor):
+    init_mt(init_data=investor)
+    global output_report
+    output_report = []
+    investor_positions = mt.positions_get()
+    print(f'INVESTOR account {investor["login"]} have {len(investor_positions)} positions : {datetime.now()}')
+    check_stop_limits(calc_limit_in_percent=input_check_stop_limit_in_percent)
+    enable_algotrading()
+    for pos_lid in lieder_positions:
+        inv_tp = get_pips_tp(pos_lid)
+        inv_sl = get_pips_sl(pos_lid)
+        if not is_position_exist_in_list(position=pos_lid, list_positions=investor_positions, check_for_comment=True):
+            volume = get_deals_volume(lieder_volume=pos_lid.volume, lieder_balance=lieder_balance,
+                                      multiplier=input_volume_multiplier,
+                                      get_for_balance=input_get_multiplier_for_balance)
+            response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
+                                     sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+            rpt = {'investor_id': investor_accounts.index(investor), 'code': response.retcode,
+                   'message': send_retcodes[response.retcode][1]}
+            output_report.append(rpt)
+    close_positions_by_lieder(positions_lieder=lieder_positions, positions_investor=mt.positions_get())
+    if len(output_report) > 0:
+        print('    ', output_report)
     mt.shutdown()
 
 
-main()
-print(output_report)
+async def task_manager():
+    while True:
+        await trading_event.wait()
+        for _ in investor_accounts:
+            event_loop.create_task(execute_investor(_))
+        trading_event.clear()
+
+
+if __name__ == '__main__':
+    event_loop = asyncio.new_event_loop()
+    event_loop.create_task(execute_lieder(1))
+    event_loop.create_task(task_manager())
+    event_loop.run_forever()
