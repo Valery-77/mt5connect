@@ -1,13 +1,14 @@
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
-
+from rest_framework.decorators import api_view
 from .models import Exchange
 
 
+@api_view(('GET', 'POST'))
 def index(request):
     if request.method == 'GET':
         try:
-            exchange = get_object_or_404(Exchange, id=5)
+            exchange = get_object_or_404(Exchange, id=1)
             if not exchange.isApiKeyActive:
                 commentary = 'Ключ APi истек'
                 exchange.commentary = commentary
