@@ -19,5 +19,5 @@ from django.urls import path, include
 urlpatterns = [
     path('', include('exchange.urls')),
     path('admin/', admin.site.urls),
-    # path('', views.index, name='index')
+    # path('api/', include('rest_framework.urls', namespace='rest_framework'))
 ]

@@ -1,33 +1,33 @@
+import json
+
+import requests as requests
 from django.http import HttpResponse
-from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view
-from .models import Exchange
 
 
 @api_view(('GET', 'POST'))
 def index(request):
     if request.method == 'GET':
         try:
-            exchange = get_object_or_404(Exchange, id=1)
-            if not exchange.isApiKeyActive:
+            url = 'http://localhost:8000/api/demo_mt5/list'
+            response = requests.get(url).json()[0]
+            api_key_expired = response.get('api_key_expired')
+            no_exchange_connection = response.get('no_exchange_connection')
+            if api_key_expired == "true":
                 commentary = 'Ключ APi истек'
-                exchange.commentary = commentary
-                exchange.save(update_fields=["commentary"])
-                return HttpResponse(commentary)
-            elif not exchange.connectExchange:
+                payload = json.dumps({"commentary": commentary})
+            elif no_exchange_connection == 'true':
                 commentary = 'Нет связи с биржей'
-                exchange.commentary = commentary
-                exchange.save(update_fields=["commentary"])
-                return HttpResponse(commentary)
-            elif not exchange.connectExchange and not exchange.isApiKeyActive:
+                payload = json.dumps({"commentary": commentary})
+            elif api_key_expired == "true" and no_exchange_connection == 'true':
                 commentary = 'Нет связи с биржей и ключ APi истек'
-                exchange.commentary = commentary
-                exchange.save(update_fields=["commentary"])
-                return HttpResponse(commentary)
+                payload = json.dumps({"commentary": commentary})
             else:
                 commentary = 'на редкость все хорошо'
-                exchange.commentary = commentary
-                exchange.save(update_fields=["commentary"])
-                return HttpResponse(commentary)
+                payload = json.dumps({"commentary": commentary})
+            headers = {'Content-Type': 'application/json'}
+            patch_url = 'http://127.0.0.1:8000/api/demo_mt5/update/1/'
+            requests.request("PATCH", patch_url, headers=headers, data=payload)
+            return HttpResponse("SUCCESSFUL PATCH")
         except Exception as e:
             return HttpResponse(e)
