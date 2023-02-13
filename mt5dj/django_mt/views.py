@@ -1,3 +1,6 @@
+import ast
+import json
+
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -33,11 +36,16 @@ class InvestorView(APIView):
         # sr['transaction_minus'] = 100
         # data = sr
         if pk and data:
+            jdata = ast.literal_eval(data)
             instance = InvestorModel.objects.get(pk=pk)
-            serializer = InvestorSerializer(data=data, instance=instance)
+            new = InvestorSerializer(instance).data
+            new.update(jdata)
+            serializer = InvestorSerializer(data=new, instance=instance)
             serializer.is_valid()
             serializer.save()
-        return Response(serializer.data)
+            print('-+-+-+-+-', InvestorSerializer(InvestorModel.objects.get(pk=pk)).data['active_action'])
+            return Response(serializer.data)
+        return Response([])
 
     # @staticmethod
     # def put(request, obj=None):
