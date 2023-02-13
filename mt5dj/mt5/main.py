@@ -117,7 +117,8 @@ host = 'http://127.0.0.1:8000/api/investors/'
 # input_transaction_plus = 0.1
 # input_transaction_minus = -0.1
 def get_investors_list():
-    response = requests.get(host).json()
+    url = host + '?user=all'
+    response = requests.get(url).json()
     investors_list = []
     for investor in response:
         if investor['in_blacklist'] == 'Нет' and investor['disconnect'] == 'Нет':
@@ -192,8 +193,10 @@ def get_history_profit():
 
 def check_stop_limits(investor):
     """Проверка стоп-лимита по проценту либо абсолютному показателю"""
-    start_balance: float = investor['investment_size'],
-    limit_size: float = investor['volume_stop_limit'],
+    start_balance = investor['investment_size']
+    if start_balance <= 0:
+        start_balance = 1
+    limit_size = investor['volume_stop_limit']
     calc_limit_in_percent = True if investor['stop_limit_type'] == 'Проценты' else False
     history_profit = get_history_profit()
     current_profit = get_positions_profit()
@@ -237,13 +240,16 @@ def checking_an_open_transaction(transaction_plus, transaction_minus, price_open
         return False
 
 
-def get_deals_volume(lieder_volume, lieder_balance_value, multiplier, get_for_balance):
+def get_deals_volume(investor, lieder_volume, lieder_balance_value):
     """Расчет множителя"""
+    multiplier = investor['volume_multiplier'],
+    get_for_balance = True if investor['multiplier_type'] == 'Баланс' else False
+    investment_size = investor['investment_size']
     ext_k: float
     if get_for_balance:
-        ext_k = (input_investment_size + get_history_profit()) / lieder_balance_value
+        ext_k = (investment_size + get_history_profit()) / lieder_balance_value
     else:
-        ext_k = (input_investment_size + get_history_profit() + get_positions_profit()) / lieder_balance_value
+        ext_k = (investment_size + get_history_profit() + get_positions_profit()) / lieder_balance_value
     return round(lieder_volume * multiplier * ext_k, 4)
 
 
@@ -425,10 +431,8 @@ async def execute_investor(investor):
                                             price_open=pos_lid.price_open, price_current=pos_lid.price_current,
                                             type_of_order=pos_lid.type):
                 volume = 1.0 if investor['change_multiplier'] == 'Нет' else get_deals_volume(
-                    lieder_volume=pos_lid.volume,
-                    lieder_balance_value=lieder_balance if investor['multiplier_type'] == 'Баланс' else lieder_equity,
-                    multiplier=investor['volume_multiplier'],
-                    get_for_balance=True if investor['multiplier_type'] == 'Баланс' else False)
+                    investor, lieder_volume=pos_lid.volume,
+                    lieder_balance_value=lieder_balance if investor['multiplier_type'] == 'Баланс' else lieder_equity)
 
                 response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
                                          sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)

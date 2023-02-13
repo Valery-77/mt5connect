@@ -55,8 +55,10 @@ class InvestorModel(models.Model):
         ('Минус', 'Минус'),
     ]
 
+    investment_size = models.FloatField(verbose_name='Стартовый капитал', default=10000.0)
+
     transaction_plus = models.FloatField(verbose_name='Максимум сделки +', default=0.1)
-    transaction_minus = models.FloatField(verbose_name='Максимум сделки -', default=-0.1)   # ------------
+    transaction_minus = models.FloatField(verbose_name='Максимум сделки -', default=-0.1)
     transaction_timeout = models.IntegerField(verbose_name='Время ожидания', default=1)   # ------------
     transaction_type = models.CharField(verbose_name='Спросить у инвестора',   # ------------
                                         max_length=100, default='Все', choices=TRANSACTION_TYPE_CHOICES)
@@ -75,7 +77,6 @@ class InvestorModel(models.Model):
                                     max_length=100, default='Нет', choices=BOOL_CHOICES)
     after = models.CharField(verbose_name='Сопровождать сделки',   # ------------
                              max_length=100, default='Да', choices=BOOL_CHOICES)
-    investment_size = models.FloatField(verbose_name='Стартовый капитал', default=10000.0)
 
     multiplier_type = models.CharField(verbose_name='Множитель', max_length=100,
                                        default='Баланс', choices=CALC_MULT_CHOICES)
