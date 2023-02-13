@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta
 from math import fabs
 import MetaTrader5 as mt
-from win32gui import PostMessage, GetAncestor, FindWindow
+# from win32gui import PostMessage, GetAncestor, FindWindow
 import requests
 
 from dotenv import load_dotenv
@@ -75,7 +75,7 @@ last_errors = {
     -10003: ('RES_E_INTERNAL_FAIL_CONNECT', 'internal IPC no ipc'),
     -10005: ('RES_E_INTERNAL_FAIL_TIMEOUT', 'internal timeout')}
 
-load_dotenv()
+# load_dotenv()
 
 TIMEOUT_INIT = 10_000  # время ожидания при инициализации терминала (рекомендуемое 60_000 millisecond)
 lieder_account = {
@@ -84,20 +84,20 @@ lieder_account = {
     'password': os.getenv('LEADER_PASSWORD'),
     'server': os.getenv('LEADER_SERVER')
 }  # данные лидера для инициализации
-investor_accounts = (  # данные инвесторов для инициализации
-    {
-        'terminal_path': os.getenv('INVEST_PATH1'),
-        'login': os.getenv('INVEST_LOGIN1'),
-        'password': os.getenv('INVEST_PASSWORD1'),
-        'server': os.getenv('INVEST_SERVER1')
-    },
-    {
-        'terminal_path': os.getenv('INVEST_PATH2'),
-        'login': os.getenv('INVEST_LOGIN2'),
-        'password': os.getenv('INVEST_PASSWORD2'),
-        'server': os.getenv('INVEST_SERVER2')
-    }
-)
+# investor_accounts = (  # данные инвесторов для инициализации
+#     {
+#         'terminal_path': os.getenv('INVEST_PATH1'),
+#         'login': os.getenv('INVEST_LOGIN1'),
+#         'password': os.getenv('INVEST_PASSWORD1'),
+#         'server': os.getenv('INVEST_SERVER1')
+#     },
+#     {
+#         'terminal_path': os.getenv('INVEST_PATH2'),
+#         'login': os.getenv('INVEST_LOGIN2'),
+#         'password': os.getenv('INVEST_PASSWORD2'),
+#         'server': os.getenv('INVEST_SERVER2')
+#     }
+# )
 
 MAGIC = 5555555553  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
@@ -286,19 +286,19 @@ def get_deals_volume(investor, lieder_volume, lieder_balance_value):
     return round(lieder_volume * multiplier * ext_k, 4)
 
 
-def enable_algotrading():
-    """Принудительное включение режима Аготрейдинга на терминале"""
-    try:
-        if not mt.terminal_info().trade_allowed:
-            mt_wmcmd_experts = 32851
-            wm_command = 0x0111
-            ga_root = 2
-            terminal_handle = FindWindow('MetaQuotes::MetaTrader::5.00', None)
-            PostMessage(GetAncestor(terminal_handle, ga_root), wm_command, mt_wmcmd_experts, 0)
-    except AttributeError:
-        print(f'Невозможно подключиться к терминалу : {datetime.now()}')
-        exit()
-
+# def enable_algotrading():
+#     """Принудительное включение режима Аготрейдинга на терминале"""
+#     try:
+#         if not mt.terminal_info().trade_allowed:
+#             mt_wmcmd_experts = 32851
+#             wm_command = 0x0111
+#             ga_root = 2
+#             terminal_handle = FindWindow('MetaQuotes::MetaTrader::5.00', None)
+#             PostMessage(GetAncestor(terminal_handle, ga_root), wm_command, mt_wmcmd_experts, 0)
+#     except AttributeError:
+#         print(f'Невозможно подключиться к терминалу : {datetime.now()}')
+#         exit()
+#
 
 def init_mt(init_data, need_login=False):
     """Инициализация терминала"""
@@ -452,7 +452,7 @@ async def execute_investor(investor):
     investor_positions = mt.positions_get()
     print(f' - {investor["email"]} [{investor["login"]}] - {len(investor_positions)} positions : {datetime.now()}')
     check_stop_limits(investor=investor)
-    enable_algotrading()
+    # enable_algotrading()
     for pos_lid in lieder_positions:
         inv_tp = get_pips_tp(pos_lid)
         inv_sl = get_pips_sl(pos_lid)
