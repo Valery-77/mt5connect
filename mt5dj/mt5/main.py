@@ -1,13 +1,9 @@
 import asyncio
-import os
-
 from datetime import datetime, timedelta
 from math import fabs
 import MetaTrader5 as mt
 # from win32gui import PostMessage, GetAncestor, FindWindow
 import requests
-
-from dotenv import load_dotenv
 
 send_retcodes = {
     10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
@@ -75,29 +71,13 @@ last_errors = {
     -10003: ('RES_E_INTERNAL_FAIL_CONNECT', 'internal IPC no ipc'),
     -10005: ('RES_E_INTERNAL_FAIL_TIMEOUT', 'internal timeout')}
 
-# load_dotenv()
-
 TIMEOUT_INIT = 10_000  # время ожидания при инициализации терминала (рекомендуемое 60_000 millisecond)
 lieder_account = {
-    'terminal_path': os.getenv('LEADER_PATH'),
-    'login': os.getenv('LEADER_LOGIN'),
-    'password': os.getenv('LEADER_PASSWORD'),
-    'server': os.getenv('LEADER_SERVER')
+    'terminal_path': r'C:\Users\Данил\Desktop\MetaTrader 5_1\terminal64.exe',
+    'login': 805060,
+    'password': 'bsccvba1',
+    'server': 'OpenInvestments-Demo'
 }  # данные лидера для инициализации
-# investor_accounts = (  # данные инвесторов для инициализации
-#     {
-#         'terminal_path': os.getenv('INVEST_PATH1'),
-#         'login': os.getenv('INVEST_LOGIN1'),
-#         'password': os.getenv('INVEST_PASSWORD1'),
-#         'server': os.getenv('INVEST_SERVER1')
-#     },
-#     {
-#         'terminal_path': os.getenv('INVEST_PATH2'),
-#         'login': os.getenv('INVEST_LOGIN2'),
-#         'password': os.getenv('INVEST_PASSWORD2'),
-#         'server': os.getenv('INVEST_SERVER2')
-#     }
-# )
 
 MAGIC = 5555555553  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
