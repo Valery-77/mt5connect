@@ -1,7 +1,6 @@
 import asyncio
 import os
 
-import MetaTrader5 as mt
 from datetime import datetime, timedelta
 from math import fabs
 
