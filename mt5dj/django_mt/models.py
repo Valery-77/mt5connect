@@ -24,6 +24,9 @@ class InvestorModel(models.Model):
     password = models.CharField(max_length=255)
     server = models.CharField(max_length=255)
     terminal_path = models.CharField(max_length=255)
+
+    active_action = models.BooleanField(default=True)
+
     INIT_CHOICES = [
         ('Инвестор', 'Инвестор'),
         ('Админ', 'Админ'),
@@ -49,6 +52,11 @@ class InvestorModel(models.Model):
         ('Закрыть и отключить', 'Закрыть и отключить'),
     ]
 
+    W_POSITION_CHOICES = [
+        ('Закрыть', 'Закрыть'),
+        ('Оставить', 'Оставить'),
+    ]
+
     TRANSACTION_TYPE_CHOICES = [
         ('Все', 'Все'),
         ('Плюс', 'Плюс'),
@@ -57,8 +65,8 @@ class InvestorModel(models.Model):
 
     investment_size = models.FloatField(verbose_name='Стартовый капитал', default=10000.0)
 
-    transaction_plus = models.FloatField(verbose_name='Максимум сделки +', default=0.1)
-    transaction_minus = models.FloatField(verbose_name='Максимум сделки -', default=-0.1)
+    transaction_plus = models.FloatField(verbose_name='Сделка в +', default=0.1)
+    transaction_minus = models.FloatField(verbose_name='Сделка в -', default=-0.1)
     transaction_timeout = models.IntegerField(verbose_name='Время ожидания', default=1)   # ------------
     transaction_type = models.CharField(verbose_name='Спросить у инвестора',   # ------------
                                         max_length=100, default='Все', choices=TRANSACTION_TYPE_CHOICES)
@@ -69,13 +77,13 @@ class InvestorModel(models.Model):
                                  max_length=100, default='Инвестор', choices=INIT_CHOICES)
     disconnect = models.CharField(verbose_name='Отключиться',
                                   max_length=100, default='Да', choices=BOOL_CHOICES)
-    w_positions = models.CharField(verbose_name='Открытые сделки',   # ------------
-                                   max_length=100, default='Да', choices=BOOL_CHOICES)
+    w_positions = models.CharField(verbose_name='Открытые сделки',
+                                   max_length=100, default='Закрыть', choices=W_POSITION_CHOICES)
     notify = models.CharField(verbose_name='Уведомления',   # ------------
                               max_length=100, default='Да', choices=BOOL_CHOICES)
     in_blacklist = models.CharField(verbose_name='Блеклист',
                                     max_length=100, default='Нет', choices=BOOL_CHOICES)
-    after = models.CharField(verbose_name='Сопровождать сделки',   # ------------
+    after = models.CharField(verbose_name='Сопровождать сделки',
                              max_length=100, default='Да', choices=BOOL_CHOICES)
 
     multiplier_type = models.CharField(verbose_name='Множитель', max_length=100,
@@ -87,7 +95,7 @@ class InvestorModel(models.Model):
     stop_limit_type = models.CharField(verbose_name='Стоп-лосс', max_length=100,
                                        default='Проценты', choices=CALC_STOP_CHOICES)
     volume_stop_limit = models.FloatField(verbose_name='Значение стопа', default=20.0)
-    stop_limit_after = models.CharField(verbose_name='Открытые сделки', max_length=100,   # ------------
+    stop_limit_after = models.CharField(verbose_name='Открытые сделки', max_length=100,
                                         default='Закрыть', choices=AFTER_STOP_CHOICES)
 
     class Meta:

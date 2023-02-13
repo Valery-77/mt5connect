@@ -3,10 +3,8 @@ import os
 
 from datetime import datetime, timedelta
 from math import fabs
-
 import MetaTrader5 as mt
 from win32gui import PostMessage, GetAncestor, FindWindow
-
 import requests
 
 from dotenv import load_dotenv
@@ -122,14 +120,42 @@ host = 'http://127.0.0.1:8000/api/investors/'
 # input_stop_limit = 20.05  # значение стоп-лимита (% или USD)
 # input_transaction_plus = 0.1
 # input_transaction_minus = -0.1
+
+def change_investor_data(investor, data):
+    url = host + '?id=' + str(investor['id']) + f'&data={data}'  # '&data={"active_action": False}'
+    requests.patch(url=url)
+
+
 def get_investors_list():
     url = host + '?user=all'
     response = requests.get(url).json()
     investors_list = []
     for investor in response:
-        if investor['in_blacklist'] == 'Нет' and investor['disconnect'] == 'Нет':
+
+        if investor['active_action']:  # если инвестор активен
+
+            if investor['in_blacklist'] == 'Да':  # если в блек листе
+                force_close_all_positions(investor)
+                change_investor_data(investor=investor, data={"active_action": False})
+                continue
+
+            if investor['disconnect'] == 'Да':  # если отключиться
+                if get_investors_positions_count(investor) == 0:  # если нет открыты сделок
+                    change_investor_data(investor=investor, data={"active_action": False})
+                    continue
+
+                if investor['w_positions'] == 'Закрыть':  # если сделки закрыть
+                    force_close_all_positions(investor)
+                    change_investor_data(investor=investor, data={"active_action": False})
+                    continue
+
+                if investor['w_positions'] == 'Оставить' and investor[
+                    'after'] == 'Нет':  # если сделки оставить и не сопровождать
+                    change_investor_data(investor=investor, data={"active_action": False})
+                    continue
+
             investors_list.append(investor)
-            # print(investor)
+
     return investors_list
 
 
@@ -225,11 +251,12 @@ def check_stop_limits(investor):
         # CLOSE ALL POSITIONS
         active_positions = mt.positions_get()
         if close_positions:
-            print('     Закрытие всех позиций по условию стоп-лимит')
+            print('     Закрытие всех позиций по условию стоп-лосс')
             for act_pos in active_positions:
                 if act_pos.magic == MAGIC:
                     close_position(act_pos)
-            # exit()
+            if investor['stop_limit_after'] == 'Закрыть и отключить':
+                change_investor_data(investor=investor, data={"active_action": False})
 
 
 def checking_an_open_transaction(transaction_plus, transaction_minus, price_open, price_current, type_of_order,
@@ -248,10 +275,10 @@ def checking_an_open_transaction(transaction_plus, transaction_minus, price_open
 
 def get_deals_volume(investor, lieder_volume, lieder_balance_value):
     """Расчет множителя"""
-    multiplier = investor['volume_multiplier'],
+    multiplier = investor['volume_multiplier']
     get_for_balance = True if investor['multiplier_type'] == 'Баланс' else False
     investment_size = investor['investment_size']
-    ext_k: float
+    ext_k = 1.0
     if get_for_balance:
         ext_k = (investment_size + get_history_profit()) / lieder_balance_value
     else:
@@ -343,9 +370,15 @@ def close_position(position):
     return result
 
 
-def force_close_all_positions(investor_data):
+def get_investors_positions_count(investor):
+    """Количество открытых позиций"""
+    init_mt(init_data=investor)
+    return mt.positions_total()
+
+
+def force_close_all_positions(investor):
     """Принудительное закрытие всех позиций аккаунта"""
-    init_mt(init_data=investor_data)
+    init_mt(init_data=investor)
     positions = mt.positions_get()
     if len(positions) > 0:
         for position in positions:
@@ -403,20 +436,12 @@ async def execute_lieder(sleep_size=5):
         init_mt(init_data=lieder_account)
         lieder_balance = mt.account_info().balance
         lieder_equity = mt.account_info().equity
-        # previous_lieder_positions = lieder_positions
         lieder_positions = mt.positions_get()
         mt.shutdown()
-        if True:  # is_positions_changed(previous_lieder_positions, lieder_positions):
-            if len(lieder_positions) > 0:
-                print(f'LIEDER {lieder_account["login"]} have {len(lieder_positions)} positions',
-                      datetime.now().time())
-                await asyncio.sleep(sleep_size)
-                trading_event.set()
-            else:
-                print('NO LIEDER positions')
-                await asyncio.sleep(sleep_size)
-        else:
-            print('NO CHANGE in LIEDER positions')
+        if True:
+            print(f'\nLIEDER {lieder_account["login"]} - {len(lieder_positions)} positions',
+                  datetime.now().time())
+            trading_event.set()
             await asyncio.sleep(sleep_size)
 
 
@@ -425,7 +450,7 @@ async def execute_investor(investor):
     global output_report
     output_report = []
     investor_positions = mt.positions_get()
-    print(f'INVESTOR account {investor["login"]} have {len(investor_positions)} positions : {datetime.now()}')
+    print(f' - {investor["email"]} [{investor["login"]}] - {len(investor_positions)} positions : {datetime.now()}')
     check_stop_limits(investor=investor)
     enable_algotrading()
     for pos_lid in lieder_positions:
@@ -436,10 +461,12 @@ async def execute_investor(investor):
                                             transaction_minus=investor['transaction_minus'],
                                             price_open=pos_lid.price_open, price_current=pos_lid.price_current,
                                             type_of_order=pos_lid.type):
-                volume = 1.0 if investor['change_multiplier'] == 'Нет' else get_deals_volume(
-                    investor, lieder_volume=pos_lid.volume,
-                    lieder_balance_value=lieder_balance if investor['multiplier_type'] == 'Баланс' else lieder_equity)
-
+                volume = 1.0\
+                    if investor['change_multiplier'] == 'Нет' \
+                    else get_deals_volume(investor, lieder_volume=pos_lid.volume,
+                                          lieder_balance_value=lieder_balance
+                                          if investor['multiplier_type'] == 'Баланс' else lieder_equity)
+                print('-----------------VOLUME', volume)
                 response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
                                          sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
                 rpt = {'investor_id': investor_accounts.index(investor), 'code': response.retcode,
@@ -461,6 +488,6 @@ async def task_manager():
 
 if __name__ == '__main__':
     event_loop = asyncio.new_event_loop()
-    event_loop.create_task(execute_lieder(1))
+    event_loop.create_task(execute_lieder(sleep_size=1))
     event_loop.create_task(task_manager())
     event_loop.run_forever()
