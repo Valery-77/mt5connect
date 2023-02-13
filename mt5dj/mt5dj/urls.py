@@ -17,7 +17,7 @@ from django.contrib import admin
 from django.urls import path, include
 
 urlpatterns = [
-    path('', include('exchange.urls')),
+    path('exchange/', include('exchange.urls')),
     path('admin/', admin.site.urls),
-    # path('api/', include('rest_framework.urls', namespace='rest_framework'))
+    path('api/', include('django_mt.urls')),
 ]
