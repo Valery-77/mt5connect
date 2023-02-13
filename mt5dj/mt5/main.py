@@ -126,7 +126,7 @@ def get_investors_list():
 
                 if investor['w_positions'] == 'Закрыть':  # если сделки закрыть
                     force_close_all_positions(investor)
-                    change_investor_data(investor=investor, data={"active_action": False})
+                    # change_investor_data(investor=investor, data={"active_action": False})
                     continue
 
                 if investor['w_positions'] == 'Оставить' and investor[
@@ -284,7 +284,7 @@ def init_mt(init_data, need_login=False):
     """Инициализация терминала"""
     if mt.initialize(login=init_data['login'], server=init_data['server'], password=init_data['password'],
                      path=init_data['terminal_path'], timeout=TIMEOUT_INIT):
-        # print(f'INVESTOR account {init_data["login"]} : {datetime.now()}')
+        print(f'INVESTOR account {init_data["login"]} : {datetime.now()}')
         if need_login:
             if not mt.login(login=init_data['login'], server=init_data['server'], password=init_data['password']):
                 print('Login ERROR', mt.last_error())
