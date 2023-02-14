@@ -1,7 +1,8 @@
 from django.urls import path
 
-from . import views
+from .views import QuotesViewSetPatch, index
 
 urlpatterns = [
-    path('', views.index, name='name'),
+    path('', index, name='name'),
+    path('update/<int:pk>/', QuotesViewSetPatch.as_view()),
 ]

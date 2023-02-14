@@ -2,7 +2,11 @@ import json
 
 import requests as requests
 from django.http import HttpResponse
+from rest_framework import generics
 from rest_framework.decorators import api_view
+
+from .models import Quotes
+from .serializer import QuotesSerializer
 
 
 @api_view(('GET', 'POST'))
@@ -31,3 +35,8 @@ def index(request):
             return HttpResponse("SUCCESSFUL PATCH")
         except Exception as e:
             return HttpResponse(e)
+
+
+class QuotesViewSetPatch(generics.UpdateAPIView):
+    serializer_class = QuotesSerializer
+    queryset = Quotes.objects.all()

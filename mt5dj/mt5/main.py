@@ -1,9 +1,11 @@
 import asyncio
+import json
 from datetime import datetime, timedelta
 from math import fabs
 import MetaTrader5 as mt
 # from win32gui import PostMessage, GetAncestor, FindWindow
 import requests
+from django.core.serializers.json import DjangoJSONEncoder
 
 send_retcodes = {
     10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
@@ -407,6 +409,33 @@ def is_position_exist_in_list(position, list_positions, check_for_comment=False)
 #     return False
 
 # ----------------------------------------------------------------------------  async
+
+async def patching_quotes():
+    utc_to = datetime.combine(datetime.today(), datetime.min.time())
+    utc_from = utc_to - timedelta(days=1)
+    quotes = ['EURUSD', 'USDRUB', 'EURRUB']
+    for i, quote in enumerate(quotes):
+        i = i + 1
+        try:
+            if quote == 'EURRUB':
+                eurusd = mt.copy_rates_range("EURUSD", mt.TIMEFRAME_H4, utc_from, utc_to)[-1][4]
+                usdrub = mt.copy_rates_range("USDRUB", mt.TIMEFRAME_H4, utc_from, utc_to)[-1][4]
+                data = {"currencies": quote,
+                        "close": eurusd * usdrub}
+            else:
+                data = {"currencies": quote,
+                        "close": mt.copy_rates_range(quote, mt.TIMEFRAME_H4, utc_from, utc_to)[-1][4]}
+            payload = json.dumps(data,
+                                 sort_keys=True,
+                                 indent=1,
+                                 cls=DjangoJSONEncoder)
+            headers = {'Content-Type': 'application/json'}
+            patch_url = f'http://127.0.0.1:8000/exchange/update/{i}/'
+            requests.request("PATCH", patch_url, headers=headers, data=payload)
+        except Exception as e:
+            print("Exception in patching_quotes:", e)
+
+
 async def execute_lieder(sleep_size=5):
     global lieder_balance, lieder_equity
     global lieder_positions
@@ -414,6 +443,12 @@ async def execute_lieder(sleep_size=5):
     while True:
         investor_accounts = get_investors_list()
         init_mt(init_data=lieder_account)
+
+        time_now = datetime.now()
+        current_time = time_now.strftime("%H:%M:%S")
+        if current_time == "10:00:00":
+            await patching_quotes()
+
         lieder_balance = mt.account_info().balance
         lieder_equity = mt.account_info().equity
         lieder_positions = mt.positions_get()
@@ -441,7 +476,7 @@ async def execute_investor(investor):
                                             transaction_minus=investor['transaction_minus'],
                                             price_open=pos_lid.price_open, price_current=pos_lid.price_current,
                                             type_of_order=pos_lid.type):
-                volume = 1.0\
+                volume = 1.0 \
                     if investor['change_multiplier'] == 'Нет' \
                     else get_deals_volume(investor, lieder_volume=pos_lid.volume,
                                           lieder_balance_value=lieder_balance
