@@ -255,6 +255,41 @@ def checking_an_open_transaction(transaction_plus, transaction_minus, price_open
         return False
 
 
+def check_transaction(investor, lieder_position):
+    """Проверка открытия позиции"""
+    transaction_action = True if investor['transaction_action'] == 'Да' else False
+    if not transaction_action:  # если не возврат цены
+        transaction_timeout = investor['transaction_timeout'] * 60
+        deal_time = lieder_position.time_update
+        curr_time = round(datetime.timestamp(datetime.now().replace(microsecond=0)))
+        delta_time = curr_time - deal_time
+        if delta_time > transaction_timeout:  # если время больше заданного
+            return False
+
+    transaction_type = 0
+    if investor['transaction_type'] == 'Плюс':
+        transaction_type = 1
+    elif investor['transaction_type'] == 'Минус':
+        transaction_type = -1
+    deal_profit = lieder_position.profit
+    if transaction_type > 0 > deal_profit:  # если открывать только + и профит < 0
+        return False
+    if deal_profit > 0 > transaction_type:  # если открывать только - и профит > 0
+        return False
+
+    transaction_plus = investor['transaction_plus']
+    transaction_minus = investor['transaction_minus']
+    price_open = lieder_position.price_open
+    price_current = lieder_position.price_current
+
+    res = None
+    if lieder_position.type == 0:   # Buy
+        res = (price_current - price_open) / price_open * 100  # Расчет сделки покупки по формуле
+    elif lieder_position.type == 1:  # Sell
+        res = (price_open - price_current) / price_open * 100  # Расчет сделки продажи по формуле
+    return True if res is not None and transaction_plus >= res >= transaction_minus else False  # Проверка на заданные отклонения
+
+
 def get_deals_volume(investor, lieder_volume, lieder_balance_value):
     """Расчет множителя"""
     multiplier = investor['volume_multiplier']
@@ -476,17 +511,20 @@ async def execute_investor(investor):
                                             transaction_minus=investor['transaction_minus'],
                                             price_open=pos_lid.price_open, price_current=pos_lid.price_current,
                                             type_of_order=pos_lid.type):
-                volume = 1.0 \
+                volume = 1.0\
                     if investor['change_multiplier'] == 'Нет' \
                     else get_deals_volume(investor, lieder_volume=pos_lid.volume,
                                           lieder_balance_value=lieder_balance
                                           if investor['multiplier_type'] == 'Баланс' else lieder_equity)
-                print('-----------------VOLUME', volume)
                 response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
                                          sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
                 rpt = {'investor_id': investor_accounts.index(investor), 'code': response.retcode,
                        'message': send_retcodes[response.retcode][1]}
                 output_report.append(rpt)
+
+                if response.retcode == 10014:
+                    print('-----------------VOLUME', volume)
+
     close_positions_by_lieder(positions_lieder=lieder_positions, positions_investor=mt.positions_get())
     if len(output_report) > 0:
         print('    ', output_report)
