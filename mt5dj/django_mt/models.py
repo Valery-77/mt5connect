@@ -67,10 +67,10 @@ class InvestorModel(models.Model):
 
     transaction_plus = models.FloatField(verbose_name='Сделка в +', default=0.1)
     transaction_minus = models.FloatField(verbose_name='Сделка в -', default=-0.1)
-    transaction_timeout = models.IntegerField(verbose_name='Время ожидания', default=1)   # ------------
-    transaction_type = models.CharField(verbose_name='Спросить у инвестора',   # ------------
+    transaction_timeout = models.IntegerField(verbose_name='Время ожидания', default=1)
+    transaction_type = models.CharField(verbose_name='Спросить у инвестора',
                                         max_length=100, default='Все', choices=TRANSACTION_TYPE_CHOICES)
-    transaction_action = models.CharField(verbose_name='Возврат цены',   # ------------
+    transaction_action = models.CharField(verbose_name='Возврат цены',
                                           max_length=100, default='Да', choices=BOOL_CHOICES)
 
     initiator = models.CharField(verbose_name='Инициатор',   # ------------
