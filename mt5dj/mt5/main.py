@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timedelta
 from math import fabs
 import MetaTrader5 as Mt
-from win32gui import PostMessage, GetAncestor, FindWindow
+# from win32gui import PostMessage, GetAncestor, FindWindow
 import requests
 from django.core.serializers.json import DjangoJSONEncoder
 
@@ -538,18 +538,18 @@ def get_deals_volume(investor, lieder_volume, lieder_balance_value):
     return round(lieder_volume * multiplier * ext_k, 4)
 
 
-def enable_algotrading():
-    """Принудительное включение режима Аготрейдинга на терминале"""
-    try:
-        if not Mt.terminal_info().trade_allowed:
-            mt_wmcmd_experts = 32851
-            wm_command = 0x0111
-            ga_root = 2
-            terminal_handle = FindWindow('MetaQuotes::MetaTrader::5.00', None)
-            PostMessage(GetAncestor(terminal_handle, ga_root), wm_command, mt_wmcmd_experts, 0)
-    except AttributeError:
-        print(f'Невозможно подключиться к терминалу : {datetime.now()}')
-        exit()
+# def enable_algotrading():
+#     """Принудительное включение режима Аготрейдинга на терминале"""
+#     try:
+#         if not Mt.terminal_info().trade_allowed:
+#             mt_wmcmd_experts = 32851
+#             wm_command = 0x0111
+#             ga_root = 2
+#             terminal_handle = FindWindow('MetaQuotes::MetaTrader::5.00', None)
+#             PostMessage(GetAncestor(terminal_handle, ga_root), wm_command, mt_wmcmd_experts, 0)
+#     except AttributeError:
+#         print(f'Невозможно подключиться к терминалу : {datetime.now()}')
+#         exit()
 
 
 def init_mt(init_data, need_login=False):
@@ -726,7 +726,7 @@ async def execute_lieder(sleep_size=5):
 
 async def execute_investor(investor):
     init_mt(init_data=investor)
-    enable_algotrading()
+    # enable_algotrading()
     global output_report
     output_report = []
     investor_positions = Mt.positions_get()
