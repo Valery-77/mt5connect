@@ -78,11 +78,11 @@ START_DATE = datetime(2023, 2, 1)  # начальное время с котор
 
 LIEDER_ACCOUNT = {'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe'}
 INVESTOR_LIST = [{'terminal_path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe'},
-                  {'terminal_path': r'C:\Program Files\MetaTrader 5_3\terminal64.exe'}]
+                 {'terminal_path': r'C:\Program Files\MetaTrader 5_3\terminal64.exe'}]
 SETTINGS = {}
 
 lieder_account = {}
-investors_list = [{},{}]
+investors_list = [{}, {}]
 settings = {}
 
 # investor_accounts = []
@@ -181,6 +181,30 @@ def get_start_info():
         #             force_close_all_positions(_)
     except Exception as ex:
         print("ERROR:", ex)
+
+
+# def execute_conditions():
+#     url = host + '?user=all'
+#     response = requests.get(url).json()
+#     investors_list = []
+#     if settings['access']:  # если инвестор активен
+#
+#         if settings['blacklist'] == 'Да':  # если в блек листе
+#             force_close_all_positions(investor)
+#             disable_copy()
+#
+#         if settings['disconnect'] == 'Да':  # если отключиться
+#             if get_investors_positions_count(investor) == 0:  # если нет открыты сделок
+#                 disable_copy()
+#
+#                 if settings['accompany_transactions'] == 'Закрыть':  # если сделки закрыть
+#                     force_close_all_positions(investor)
+#                     disable_copy()
+#
+#                 if settings['open_trades_disconnect'] == 'Оставить' and settings['accompany_transactions'] == 'Нет':  # если сделки оставить и не сопровождать
+#                     disable_copy()
+#
+#     return investors_list
 
 
 # def check_income_data(json_response):
@@ -690,7 +714,7 @@ async def execute_lieder(sleep_size=5):
     while True:
         get_start_info()
         if len(settings) > 0:
-            init_res =init_mt(init_data=lieder_account)
+            init_res = init_mt(init_data=lieder_account)
             if not init_res:
                 continue
             lieder_balance = Mt.account_info().balance
