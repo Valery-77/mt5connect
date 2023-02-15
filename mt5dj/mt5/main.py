@@ -78,9 +78,13 @@ MAGIC = 9876543210  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
 START_DATE = datetime(2023, 2, 1)  # начальное время с которого ведется расчет по истории
 
-lieder_account = {'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe'}
-investors_list = [{'terminal_path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe'},
-                  {'terminal_path': r'C:\Program Files\MetaTrader 5_3\terminal64.exe'}]
+LIEDER_ACCOUNT = {'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe'}
+INVESTOR_LIST = [{'terminal_path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe'},
+                 {'terminal_path': r'C:\Program Files\MetaTrader 5_3\terminal64.exe'}]
+SETTINGS = {}
+
+lieder_account = {}
+investors_list = [{}, {}]
 settings = {}
 # investor_accounts = []
 output_report = []  # сюда выводится отчет
@@ -95,299 +99,310 @@ host = 'https://my.atimex.io:8000/api/demo_mt5/last'
 def disable_copy():
     url = 'https://my.atimex.io:8000/api/demo_mt5/list'
     response = requests.get(url).json()
-    url = f'https://my.atimex.io:8000/api/%27demo_mt5/patch/<int:{len(response)}>/'
+    url = f'https://my.atimex.io:8000/api/%27demo_mt5/patch/{len(response)}/'
     requests.patch(url=url, data={"access": False})
 
 
 def get_start_info():
-    response = requests.get(host).json()
     global lieder_account, investors_list, settings
-    if len(response) > 0:
-        lieder_account = {
-            'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe',
-            'login': int(response['leader_login']),
-            'password': response['leader_password'],
-            'server': response['leader_server']
-        }
-        investors_list = [
-            {
-                'path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe',
-                'login': int(response['investor_one_login']),
-                'password': response['investor_one_password'],
-                'server': response['investor_one_server'],
-                'investment_size': response['investment_one_size']
-            },
-            {
-                'path': r'C:\Program Files\MetaTrader 5_3\terminal64.exe',
-                'login': int(response['investor_two_login']),
-                'password': response['investor_two_password'],
-                'server': response['investor_two_server'],
-                'investment_size': response['investment_two_size']
+    try:
+        response_source = requests.get(host).json()
+        print(f'[{datetime.now().replace(microsecond=0)}] response:', response_source)
+        if len(response_source) > 0:
+            lieder_account = LIEDER_ACCOUNT
+            investors_list = INVESTOR_LIST
+            settings = SETTINGS
+            response = response_source[0]
+            lieder_account = {
+                'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe',
+                'login': int(response['leader_login']),
+                'password': response['leader_password'],
+                'server': response['leader_server']
             }
-        ]
-        settings = {
-            "deal_in_plus": response['deal_in_plus'],
-            "deal_in_minus": response['deal_in_minus'],
-            "waiting_time": response['waiting_time'],
-            "ask_an_investor": response['ask_an_investor'],
-            "price_refund": response['price_refund'],
-            "multiplier": response['multiplier'],
-            "multiplier_value": response['multiplier_value'],
-            "changing_multiplier": response['changing_multiplier'],
-            "stop_loss": response['stop_loss'],
-            "stop_value": response['stop_value'],
-            "open_trades": response['open_trades'],
-            "shutdown_initiator": response['shutdown_initiator'],
-            "disconnect": response['disconnect'],
-            "open_trades_disconnect": response['open_trades_disconnect'],
-            "notification": response['notification'],
-            "blacklist": response['blacklist'],
-            "accompany_transactions": response['accompany_transactions'],
-            "no_exchange_connection": response['no_exchange_connection'],
-            "api_key_expired": response['api_key_expired'],
-            "closed_deals_myself": response['closed_deals_myself'],
-            "reconnected": response['reconnected'],
-            "recovery_model": response['recovery_model'],
-            "buy_hold_model": response['buy_hold_model'],
-            "not_enough_margin": response['not_enough_margin'],
-            "accounts_in_diff_curr": response['accounts_in_diff_curr'],
-            "synchronize_deals": response['synchronize_deals'],
-            "deals_not_opened": response['deals_not_opened'],
-            "closed_deal_investor": response['closed_deal_investor'],
-            "opening_deal": response['opening_deal'],
-            "closing_deal": response['closing_deal'],
-            "target_and_stop": response['target_and_stop'],
-            "signal_relevance": response['signal_relevance'],
-            "profitability": response['profitability'],
-            "risk": response['risk'],
-            "profit": response['profit'],
-            "comment": response['comment'],
-            "relevance": response['relevance'],
-            "access": response['access'],
-            "update_at": response['update_at']
-        }
-        check_income_data(response)
-    else:
-        pass
+            investors_list = [
+                {
+                    'terminal_path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe',
+                    'login': int(response['investor_one_login']),
+                    'password': response['investor_one_password'],
+                    'server': response['investor_one_server'],
+                    'investment_size': float(response['investment_one_size'])
+                },
+                {
+                    'terminal_path': r'C:\Program Files\MetaTrader 5_3\terminal64.exe',
+                    'login': int(response['investor_two_login']),
+                    'password': response['investor_two_password'],
+                    'server': response['investor_two_server'],
+                    'investment_size': float(response['investment_two_size'])
+                }
+            ]
+            settings = {
+                "deal_in_plus": float(response['deal_in_plus']),
+                "deal_in_minus": float(response['deal_in_minus']),
+                "waiting_time": int(response['waiting_time']),
+                "ask_an_investor": response['ask_an_investor'],
+                "price_refund": response['price_refund'],
+                "multiplier": response['multiplier'],
+                "multiplier_value": float(response['multiplier_value']),
+                "changing_multiplier": response['changing_multiplier'],
+                "stop_loss": response['stop_loss'],
+                "stop_value": float(response['stop_value']),
+                "open_trades": response['open_trades'],
+                "shutdown_initiator": response['shutdown_initiator'],
+                "disconnect": response['disconnect'],
+                "open_trades_disconnect": response['open_trades_disconnect'],
+                "notification": response['notification'],
+                "blacklist": response['blacklist'],
+                "accompany_transactions": response['accompany_transactions'],
+                "no_exchange_connection": response['no_exchange_connection'],
+                "api_key_expired": response['api_key_expired'],
+                "closed_deals_myself": response['closed_deals_myself'],
+                "reconnected": response['reconnected'],
+                "recovery_model": response['recovery_model'],
+                "buy_hold_model": response['buy_hold_model'],
+                "not_enough_margin": response['not_enough_margin'],
+                "accounts_in_diff_curr": response['accounts_in_diff_curr'],
+                "synchronize_deals": response['synchronize_deals'],
+                "deals_not_opened": response['deals_not_opened'],
+                "closed_deal_investor": response['closed_deal_investor'],
+                "opening_deal": response['opening_deal'],
+                "closing_deal": response['closing_deal'],
+                "target_and_stop": response['target_and_stop'],
+                "signal_relevance": response['signal_relevance'],
+                "profitability": response['profitability'],
+                "risk": response['risk'],
+                "profit": response['profit'],
+                "comment": response['comment'],
+                "relevance": response['relevance'],
+                "access": response['access'],
+                "update_at": response['update_at']
+            }
+        # else:
+        #     for _ in investors_list:
+        #         if get_investors_positions_count(_) > 0:
+        #             force_close_all_positions(_)
+    except Exception as ex:
+        print("ERROR:", ex)
 
 
-def check_income_data(json_response):
-    # print(len(json_response))
-    if 'leader_login' in json_response and json_response["leader_login"] != "":
-        try:
-            lieder_account['login'] = int(json_response["leader_login"])
-        except ValueError or TypeError:
-            lieder_account['login'] = 805060
-    else:
-        lieder_account['login'] = 805060
-    if 'leader_login' in json_response and json_response["leader_password"] != "":
-        lieder_account['password'] = json_response["leader_password"]
-    else:
-        lieder_account['password'] = 'bsccvba1'
-    if 'leader_server' in json_response and json_response["leader_server"] != "":
-        lieder_account['server'] = json_response["leader_server"]
-    else:
-        lieder_account['server'] = 'OpenInvestments-Demo'
-    # -----------------------------------------
-    if 'investor_one_login' in json_response and json_response["investor_one_login"] != "":
-        try:
-            investors_list[0]['login'] = int(json_response["investor_one_login"])
-        except ValueError:
-            investors_list[0]['login'] = 805061
-    else:
-        investors_list[0]['login'] = 805061
-    if 'investor_one_password' in json_response and json_response["investor_one_password"] != "":
-        investors_list[0]['password'] = json_response["investor_one_password"]
-    else:
-        investors_list[0]['password'] = 'weax5szp'
-    if 'investor_one_server' in json_response and json_response["investor_one_server"] != "":
-        investors_list[0]['server'] = json_response["investor_one_server"]
-    else:
-        investors_list[0]['server'] = 'OpenInvestments-Demo'
-    if 'investment_one_size' in json_response and json_response["investment_one_size"] != "":
-        try:
-            investors_list[0]['investment_size'] = float(json_response["investment_one_size"])
-        except ValueError:
-            investors_list[0]['investment_size'] = 10000.0
-    else:
-        investors_list[0]['investment_size'] = 10000.0
-        # -----------------------------------------
-    if 'investor_two_login' in json_response and json_response["investor_two_login"] != "":
-        try:
-            investors_list[1]['login'] = int(json_response["investor_two_login"])
-        except ValueError:
-            investors_list[1]['login'] = 5009942758
-    else:
-        investors_list[1]['login'] = 5009942758
-    if 'investor_two_password' in json_response and json_response["investor_two_password"] != "":
-        investors_list[1]['password'] = json_response["investor_two_password"]
-    else:
-        investors_list[1]['password'] = 'rdb1toxf'
-    if 'investor_two_server' in json_response and json_response["investor_two_server"] != "":
-        investors_list[1]['server'] = json_response["investor_two_server"]
-    else:
-        investors_list[1]['server'] = 'MetaQuotes-Demo'
-    if 'investment_two_size' in json_response and json_response["investment_two_size"] != "":
-        try:
-            investors_list[1]['investment_size'] = float(json_response["investment_two_size"])
-        except ValueError:
-            investors_list[1]['investment_size'] = 10000.0
-    else:
-        investors_list[1]['investment_size'] = 10000.0
-        # -----------------------------------------
-    if 'deal_in_plus' in json_response and json_response["deal_in_plus"] != "":
-        try:
-            settings['deal_in_plus'] = float(json_response["deal_in_plus"])
-        except ValueError:
-            settings['deal_in_plus'] = 0.1
-    else:
-        settings['deal_in_plus'] = 0.1
-    if 'deal_in_minus' in json_response and json_response["deal_in_minus"] != "":
-        try:
-            settings['deal_in_minus'] = float(json_response["deal_in_minus"])
-        except ValueError:
-            settings['deal_in_minus'] = -0.1
-    else:
-        settings['deal_in_minus'] = -0.1
-    if 'waiting_time' in json_response and json_response["waiting_time"] != "":
-        try:
-            settings['waiting_time'] = int(json_response["waiting_time"])
-        except ValueError:
-            settings['waiting_time'] = 1
-    else:
-        settings['waiting_time'] = 1
-    if 'ask_an_investor' in json_response and json_response["ask_an_investor"] in ['Все', 'Плюс', 'Минус']:
-        settings['ask_an_investor'] = json_response["ask_an_investor"]
-    else:
-        settings['ask_an_investor'] = 'Все'
-    if 'price_refund' in json_response and json_response["price_refund"] in ['Да', 'Нет']:
-        settings['price_refund'] = json_response["price_refund"]
-    else:
-        settings['price_refund'] = 'Да'
-        # -----------------------------------------
-    if 'multiplier' in json_response and json_response["multiplier"] in ['Баланс', 'Средства']:
-        settings['multiplier'] = json_response["multiplier"]
-    else:
-        settings['multiplier'] = 'Баланс'
-    if 'multiplier_value' in json_response and json_response["multiplier_value"] != "":
-        try:
-            settings['multiplier_value'] = float(json_response["multiplier_value"])
-        except ValueError:
-            settings['multiplier_value'] = 10.0
-    else:
-        settings['multiplier_value'] = 10.0
-    if 'changing_multiplier' in json_response and json_response["changing_multiplier"] in ['Да', 'Нет']:
-        settings['changing_multiplier'] = json_response["changing_multiplier"]
-    else:
-        settings['changing_multiplier'] = 'Да'
-        # -----------------------------------------
-    if 'stop_loss' in json_response and json_response["stop_loss"] in ['Процент', 'Валюта']:
-        settings['stop_loss'] = json_response["stop_loss"]
-    else:
-        settings['stop_loss'] = 'Процент'
-    if 'stop_value' in json_response and json_response["stop_value"] != "":
-        try:
-            settings['stop_value'] = float(json_response["stop_value"])
-        except ValueError:
-            settings['stop_value'] = 20.0
-    else:
-        settings['stop_value'] = 20.0
-    if 'open_trades' in json_response and json_response["open_trades"] in ['Закрыть', 'Закрыть и отключить']:
-        settings['open_trades'] = json_response["open_trades"]
-    else:
-        settings['open_trades'] = 'Закрыть'
-        # -----------------------------------------
-    if 'shutdown_initiator' in json_response and json_response["shutdown_initiator"] in ['Инвестор', 'Админ',
-                                                                                         'Система']:
-        settings['shutdown_initiator'] = json_response["shutdown_initiator"]
-    else:
-        settings['shutdown_initiator'] = 'Инвестор'
-    if 'disconnect' in json_response and json_response["disconnect"] in ['Да', 'Нет']:
-        settings['disconnect'] = json_response["disconnect"]
-    else:
-        settings['disconnect'] = 'Нет'
-    if 'open_trades_disconnect' in json_response and json_response["open_trades_disconnect"] in ['Закрыть', 'Оставить']:
-        settings['open_trades_disconnect'] = json_response["open_trades_disconnect"]
-    else:
-        settings['open_trades_disconnect'] = 'Закрыть'
-    if 'notification' in json_response and json_response["notification"] in ['Да', 'Нет']:
-        settings['notification'] = json_response["notification"]
-    else:
-        settings['notification'] = 'Нет'
-    if 'blacklist' in json_response and json_response["blacklist"] in ['Да', 'Нет']:
-        settings['blacklist'] = json_response["blacklist"]
-    else:
-        settings['blacklist'] = 'Нет'
-    if 'accompany_transactions' in json_response and json_response["accompany_transactions"] in ['Да', 'Нет']:
-        settings['accompany_transactions'] = json_response["accompany_transactions"]
-    else:
-        settings['accompany_transactions'] = 'Нет'
-    # -----------------------------------------=
-    if 'no_exchange_connection' in json_response and json_response["no_exchange_connection"] in ['Да', 'Нет']:
-        settings['no_exchange_connection'] = json_response["accompany_transactions"]
-    else:
-        settings['no_exchange_connection'] = 'Нет'
-    if 'api_key_expired' in json_response and json_response["api_key_expired"] in ['Да', 'Нет']:
-        settings['api_key_expired'] = json_response["api_key_expired"]
-    else:
-        settings['api_key_expired'] = 'Нет'
-    # -----------------------------------------
-    if 'closed_deals_myself' in json_response and json_response["closed_deals_myself"] in ['Переоткрывать',
-                                                                                           'Не переоткрывать']:
-        settings['closed_deals_myself'] = json_response["closed_deals_myself"]
-    else:
-        settings['closed_deals_myself'] = 'Переоткрывать'
-    if 'reconnected' in json_response and json_response["reconnected"] in ['Переоткрывать', 'Не переоткрывать']:
-        settings['reconnected'] = json_response["reconnected"]
-    else:
-        settings['reconnected'] = 'Переоткрывать'
-    # -----------------------------------------
-    if 'recovery_model' in json_response and json_response["recovery_model"] in ['Корректировать объем',
-                                                                                 'Не корректировать']:
-        settings['recovery_model'] = json_response["recovery_model"]
-    else:
-        settings['recovery_model'] = 'Не корректировать'
-    if 'buy_hold_model' in json_response and json_response["buy_hold_model"] in ['Корректировать объем',
-                                                                                 'Не корректировать']:
-        settings['buy_hold_model'] = json_response["buy_hold_model"]
-    else:
-        settings['buy_hold_model'] = 'Не корректировать'
-    # -----------------------------------------
-    if 'not_enough_margin' in json_response and json_response["not_enough_margin"] in ['Минимальный объем',
-                                                                                       'Достаточный объем',
-                                                                                       'Не открывать']:
-        settings['not_enough_margin'] = json_response["not_enough_margin"]
-    else:
-        settings['not_enough_margin'] = 'Минимальный объем'
-    if 'accounts_in_diff_curr' in json_response and json_response["accounts_in_diff_curr"] in ['Рубли', 'Евро',
-                                                                                               'Доллары']:
-        settings['accounts_in_diff_curr'] = json_response["accounts_in_diff_curr"]
-    else:
-        settings['accounts_in_diff_curr'] = 'Доллары'
-    # -----------------------------------------
-    if 'synchronize_deals' in json_response and json_response["synchronize_deals"] in ['Да', 'Нет']:
-        settings['synchronize_deals'] = json_response["synchronize_deals"]
-    else:
-        settings['synchronize_deals'] = 'Нет'
-    if 'deals_not_opened' in json_response and json_response["deals_not_opened"] in ['Да', 'Нет']:
-        settings['deals_not_opened'] = json_response["deals_not_opened"]
-    else:
-        settings['deals_not_opened'] = 'Нет'
-    if 'closed_deal_investor' in json_response and json_response["closed_deal_investor"] in ['Да', 'Нет']:
-        settings['closed_deal_investor'] = json_response["closed_deal_investor"]
-    else:
-        settings['closed_deal_investor'] = 'Нет'
-    # "opening_deal": null,
-    # "closing_deal": null,
-    # "target_and_stop": null,
-    # "signal_relevance": null,
-    # "profitability": null,
-    # "risk": null,
-    # "profit": null,
-    # "comment": null,
-    # "relevance": false,
-    # "access": false,
-    # "update_at": "2023-02-14T12:19:22.704830Z"
+
+
+# def check_income_data(json_response):
+#     # print(len(json_response))
+#     if 'leader_login' in json_response and json_response["leader_login"] != "":
+#         try:
+#             lieder_account['login'] = int(json_response["leader_login"])
+#         except ValueError or TypeError:
+#             lieder_account['login'] = 805060
+#     else:
+#         lieder_account['login'] = 805060
+#     if 'leader_password' in json_response and json_response["leader_password"] != "":
+#         lieder_account['password'] = json_response["leader_password"]
+#     else:
+#         lieder_account['password'] = 'bsccvba1'
+#     if 'leader_server' in json_response and json_response["leader_server"] != "":
+#         lieder_account['server'] = json_response["leader_server"]
+#     else:
+#         lieder_account['server'] = 'OpenInvestments-Demo'
+#     # -----------------------------------------
+#     if 'investor_one_login' in json_response and json_response["investor_one_login"] != "":
+#         try:
+#             investors_list[0]['login'] = int(json_response["investor_one_login"])
+#         except ValueError:
+#             investors_list[0]['login'] = 805061
+#     else:
+#         investors_list[0]['login'] = 805061
+#     if 'investor_one_password' in json_response and json_response["investor_one_password"] != "":
+#         investors_list[0]['password'] = json_response["investor_one_password"]
+#     else:
+#         investors_list[0]['password'] = 'weax5szp'
+#     if 'investor_one_server' in json_response and json_response["investor_one_server"] != "":
+#         investors_list[0]['server'] = json_response["investor_one_server"]
+#     else:
+#         investors_list[0]['server'] = 'OpenInvestments-Demo'
+#     if 'investment_one_size' in json_response and json_response["investment_one_size"] != "":
+#         try:
+#             investors_list[0]['investment_size'] = float(json_response["investment_one_size"])
+#         except ValueError:
+#             investors_list[0]['investment_size'] = 10000.0
+#     else:
+#         investors_list[0]['investment_size'] = 10000.0
+#         # -----------------------------------------
+#     if 'investor_two_login' in json_response and json_response["investor_two_login"] != "":
+#         try:
+#             investors_list[1]['login'] = int(json_response["investor_two_login"])
+#         except ValueError:
+#             investors_list[1]['login'] = 5009942758
+#     else:
+#         investors_list[1]['login'] = 5009942758
+#     if 'investor_two_password' in json_response and json_response["investor_two_password"] != "":
+#         investors_list[1]['password'] = json_response["investor_two_password"]
+#     else:
+#         investors_list[1]['password'] = 'rdb1toxf'
+#     if 'investor_two_server' in json_response and json_response["investor_two_server"] != "":
+#         investors_list[1]['server'] = json_response["investor_two_server"]
+#     else:
+#         investors_list[1]['server'] = 'MetaQuotes-Demo'
+#     if 'investment_two_size' in json_response and json_response["investment_two_size"] != "":
+#         try:
+#             investors_list[1]['investment_size'] = float(json_response["investment_two_size"])
+#         except ValueError:
+#             investors_list[1]['investment_size'] = 10000.0
+#     else:
+#         investors_list[1]['investment_size'] = 10000.0
+#         # -----------------------------------------
+#     if 'deal_in_plus' in json_response and json_response["deal_in_plus"] != "":
+#         try:
+#             settings['deal_in_plus'] = float(json_response["deal_in_plus"])
+#         except ValueError:
+#             settings['deal_in_plus'] = 0.1
+#     else:
+#         settings['deal_in_plus'] = 0.1
+#     if 'deal_in_minus' in json_response and json_response["deal_in_minus"] != "":
+#         try:
+#             settings['deal_in_minus'] = float(json_response["deal_in_minus"])
+#         except ValueError:
+#             settings['deal_in_minus'] = -0.1
+#     else:
+#         settings['deal_in_minus'] = -0.1
+#     if 'waiting_time' in json_response and json_response["waiting_time"] != "":
+#         try:
+#             settings['waiting_time'] = int(json_response["waiting_time"])
+#         except ValueError:
+#             settings['waiting_time'] = 1
+#     else:
+#         settings['waiting_time'] = 1
+#     if 'ask_an_investor' in json_response and json_response["ask_an_investor"] in ['Все', 'Плюс', 'Минус']:
+#         settings['ask_an_investor'] = json_response["ask_an_investor"]
+#     else:
+#         settings['ask_an_investor'] = 'Все'
+#     if 'price_refund' in json_response and json_response["price_refund"] in ['Да', 'Нет']:
+#         settings['price_refund'] = json_response["price_refund"]
+#     else:
+#         settings['price_refund'] = 'Да'
+#         # -----------------------------------------
+#     if 'multiplier' in json_response and json_response["multiplier"] in ['Баланс', 'Средства']:
+#         settings['multiplier'] = json_response["multiplier"]
+#     else:
+#         settings['multiplier'] = 'Баланс'
+#     if 'multiplier_value' in json_response and json_response["multiplier_value"] != "":
+#         try:
+#             settings['multiplier_value'] = float(json_response["multiplier_value"])
+#         except ValueError:
+#             settings['multiplier_value'] = 10.0
+#     else:
+#         settings['multiplier_value'] = 10.0
+#     if 'changing_multiplier' in json_response and json_response["changing_multiplier"] in ['Да', 'Нет']:
+#         settings['changing_multiplier'] = json_response["changing_multiplier"]
+#     else:
+#         settings['changing_multiplier'] = 'Да'
+#         # -----------------------------------------
+#     if 'stop_loss' in json_response and json_response["stop_loss"] in ['Процент', 'Валюта']:
+#         settings['stop_loss'] = json_response["stop_loss"]
+#     else:
+#         settings['stop_loss'] = 'Процент'
+#     if 'stop_value' in json_response and json_response["stop_value"] != "":
+#         try:
+#             settings['stop_value'] = float(json_response["stop_value"])
+#         except ValueError:
+#             settings['stop_value'] = 20.0
+#     else:
+#         settings['stop_value'] = 20.0
+#     if 'open_trades' in json_response and json_response["open_trades"] in ['Закрыть', 'Закрыть и отключить']:
+#         settings['open_trades'] = json_response["open_trades"]
+#     else:
+#         settings['open_trades'] = 'Закрыть'
+#         # -----------------------------------------
+#     if 'shutdown_initiator' in json_response and json_response["shutdown_initiator"] in ['Инвестор', 'Админ',
+#                                                                                          'Система']:
+#         settings['shutdown_initiator'] = json_response["shutdown_initiator"]
+#     else:
+#         settings['shutdown_initiator'] = 'Инвестор'
+#     if 'disconnect' in json_response and json_response["disconnect"] in ['Да', 'Нет']:
+#         settings['disconnect'] = json_response["disconnect"]
+#     else:
+#         settings['disconnect'] = 'Нет'
+#     if 'open_trades_disconnect' in json_response and json_response["open_trades_disconnect"] in ['Закрыть', 'Оставить']:
+#         settings['open_trades_disconnect'] = json_response["open_trades_disconnect"]
+#     else:
+#         settings['open_trades_disconnect'] = 'Закрыть'
+#     if 'notification' in json_response and json_response["notification"] in ['Да', 'Нет']:
+#         settings['notification'] = json_response["notification"]
+#     else:
+#         settings['notification'] = 'Нет'
+#     if 'blacklist' in json_response and json_response["blacklist"] in ['Да', 'Нет']:
+#         settings['blacklist'] = json_response["blacklist"]
+#     else:
+#         settings['blacklist'] = 'Нет'
+#     if 'accompany_transactions' in json_response and json_response["accompany_transactions"] in ['Да', 'Нет']:
+#         settings['accompany_transactions'] = json_response["accompany_transactions"]
+#     else:
+#         settings['accompany_transactions'] = 'Нет'
+#     # -----------------------------------------=
+#     if 'no_exchange_connection' in json_response and json_response["no_exchange_connection"] in ['Да', 'Нет']:
+#         settings['no_exchange_connection'] = json_response["accompany_transactions"]
+#     else:
+#         settings['no_exchange_connection'] = 'Нет'
+#     if 'api_key_expired' in json_response and json_response["api_key_expired"] in ['Да', 'Нет']:
+#         settings['api_key_expired'] = json_response["api_key_expired"]
+#     else:
+#         settings['api_key_expired'] = 'Нет'
+#     # -----------------------------------------
+#     if 'closed_deals_myself' in json_response and json_response["closed_deals_myself"] in ['Переоткрывать',
+#                                                                                            'Не переоткрывать']:
+#         settings['closed_deals_myself'] = json_response["closed_deals_myself"]
+#     else:
+#         settings['closed_deals_myself'] = 'Переоткрывать'
+#     if 'reconnected' in json_response and json_response["reconnected"] in ['Переоткрывать', 'Не переоткрывать']:
+#         settings['reconnected'] = json_response["reconnected"]
+#     else:
+#         settings['reconnected'] = 'Переоткрывать'
+#     # -----------------------------------------
+#     if 'recovery_model' in json_response and json_response["recovery_model"] in ['Корректировать объем',
+#                                                                                  'Не корректировать']:
+#         settings['recovery_model'] = json_response["recovery_model"]
+#     else:
+#         settings['recovery_model'] = 'Не корректировать'
+#     if 'buy_hold_model' in json_response and json_response["buy_hold_model"] in ['Корректировать объем',
+#                                                                                  'Не корректировать']:
+#         settings['buy_hold_model'] = json_response["buy_hold_model"]
+#     else:
+#         settings['buy_hold_model'] = 'Не корректировать'
+#     # -----------------------------------------
+#     if 'not_enough_margin' in json_response and json_response["not_enough_margin"] in ['Минимальный объем',
+#                                                                                        'Достаточный объем',
+#                                                                                        'Не открывать']:
+#         settings['not_enough_margin'] = json_response["not_enough_margin"]
+#     else:
+#         settings['not_enough_margin'] = 'Минимальный объем'
+#     if 'accounts_in_diff_curr' in json_response and json_response["accounts_in_diff_curr"] in ['Рубли', 'Евро',
+#                                                                                                'Доллары']:
+#         settings['accounts_in_diff_curr'] = json_response["accounts_in_diff_curr"]
+#     else:
+#         settings['accounts_in_diff_curr'] = 'Доллары'
+#     # -----------------------------------------
+#     if 'synchronize_deals' in json_response and json_response["synchronize_deals"] in ['Да', 'Нет']:
+#         settings['synchronize_deals'] = json_response["synchronize_deals"]
+#     else:
+#         settings['synchronize_deals'] = 'Нет'
+#     if 'deals_not_opened' in json_response and json_response["deals_not_opened"] in ['Да', 'Нет']:
+#         settings['deals_not_opened'] = json_response["deals_not_opened"]
+#     else:
+#         settings['deals_not_opened'] = 'Нет'
+#     if 'closed_deal_investor' in json_response and json_response["closed_deal_investor"] in ['Да', 'Нет']:
+#         settings['closed_deal_investor'] = json_response["closed_deal_investor"]
+#     else:
+#         settings['closed_deal_investor'] = 'Нет'
+#     # "opening_deal": null,
+#     # "closing_deal": null,
+#     # "target_and_stop": null,
+#     # "signal_relevance": null,
+#     # "profitability": null,
+#     # "risk": null,
+#     # "profit": null,
+#     # "comment": null,
+#     # "relevance": false,
+#     # "access": false,
+#     # "update_at": "2023-02-14T12:19:22.704830Z"
 
 
 def get_pips_tp(position, price=None):
@@ -487,7 +502,7 @@ def check_stop_limits(investor):
                 if act_pos.magic == MAGIC:
                     close_position(act_pos)
             if settings['open_trades'] == 'Закрыть и отключить':
-                disable_copy(investor=investor, data={"active_action": False})
+                disable_copy()
 
 
 def check_transaction(lieder_position):
@@ -563,7 +578,9 @@ def init_mt(init_data, need_login=False):
     else:
         print(f'>>>>> account {init_data["login"]} : {datetime.now()} : ERROR', Mt.last_error(),
               f': timeout = {TIMEOUT_INIT}')
-        exit()
+        return False
+        # exit()
+    return True
 
 
 def open_position(symbol, deal_type, lot, sender_ticket, tp=0, sl=0):
@@ -624,19 +641,20 @@ def close_position(position):
 
 def get_investors_positions_count(investor):
     """Количество открытых позиций"""
-    init_mt(init_data=investor)
-    return Mt.positions_total()
+    init_res = init_mt(init_data=investor)
+    return Mt.positions_total() if init_res else -1
 
 
 def force_close_all_positions(investor):
     """Принудительное закрытие всех позиций аккаунта"""
-    init_mt(init_data=investor)
-    positions = Mt.positions_get()
-    if len(positions) > 0:
-        for position in positions:
-            if position.magic == MAGIC:
-                close_position(position)
-    Mt.shutdown()
+    init_res = init_mt(init_data=investor)
+    if init_res:
+        positions = Mt.positions_get()
+        if len(positions) > 0:
+            for position in positions:
+                if position.magic == MAGIC:
+                    close_position(position)
+        Mt.shutdown()
 
 
 def close_positions_by_lieder(positions_lieder, positions_investor):
@@ -667,18 +685,6 @@ def is_position_exist_in_list(position, list_positions, check_for_comment=False)
         return False
     return False
 
-
-# def is_positions_changed(prev_positions, curr_positions):
-#     prev_len = len(prev_positions)
-#     curr_len = len(curr_positions)
-#     if prev_len != curr_len:
-#         return True
-#     for cur in curr_positions:
-#         if not is_position_exist_in_list(cur, prev_positions):
-#             return True
-#     return False
-
-# ----------------------------------------------------------------------------  async
 
 async def patching_quotes():
     utc_to = datetime.combine(datetime.today(), datetime.min.time())
@@ -713,19 +719,23 @@ async def execute_lieder(sleep_size=5):
     while True:
         get_start_info()
         if len(settings) > 0:
-            init_mt(init_data=lieder_account)
+            init_res = init_mt(init_data=lieder_account)
+            if not init_res:
+                continue
             lieder_balance = Mt.account_info().balance
             lieder_equity = Mt.account_info().equity
             lieder_positions = Mt.positions_get()
             Mt.shutdown()
             print(f'\nLIEDER {lieder_account["login"]} - {len(lieder_positions)} positions',
-                      datetime.now().time())
+                  datetime.now().time())
             trading_event.set()
         await asyncio.sleep(sleep_size)
 
 
 async def execute_investor(investor):
-    init_mt(init_data=investor)
+    init_res = init_mt(init_data=investor)
+    if not init_res:
+        return
     # enable_algotrading()
     global output_report
     output_report = []
