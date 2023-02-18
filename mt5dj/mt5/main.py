@@ -76,7 +76,8 @@ last_errors = {
 TIMEOUT_INIT = 10_000  # время ожидания при инициализации терминала (рекомендуемое 60_000 millisecond)
 MAGIC = 9876543210  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
-START_DATE = datetime(2023, 2, 1)  # начальное время с которого ведется расчет по истории
+START_DATE = datetime(2023, 2, 17)  # начальное время с которого ведется расчет по истории
+UTC_OFFSET_TIMEDELTA = datetime.now() -datetime.utcnow()
 
 LIEDER_ACCOUNT = {'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe'}
 INVESTOR_LIST = [{'terminal_path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe'},
@@ -87,32 +88,51 @@ lieder_account = {}
 investors_list = [{}, {}]
 old_investors_balance = []
 settings = {}
+
 # investor_accounts = []
 output_report = []  # сюда выводится отчет
 # report_stamp = {'id': -1, 'code': 0, 'message': 'null'}
 lieder_balance = 0  # default var
 lieder_equity = 0  # default var
+start_date = START_DATE  # default var
 lieder_positions = []  # default var
+scs_access = False  # доступ к СКС
 trading_event = asyncio.Event()  # init async event
-host = 'https://my.atimex.io:8000/api/demo_mt5/last'
+host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
 
 def disable_copy():
-    url = 'https://my.atimex.io:8000/api/demo_mt5/list'
+    global scs_access
+    scs_access = False
+    url = host + 'list'
     response = requests.get(url).json()
-    url = f'https://my.atimex.io:8000/api/%27demo_mt5/patch/{len(response)}/'
+    numb = response[-1]['id']
+    url = host + f'patch/{numb}/'
     requests.patch(url=url, data={"access": False})
 
 
+def set_comment(comment):
+    url = host + 'list'
+    response = requests.get(url).json()
+    numb = response[-1]['id']
+    url = host + f'patch/{numb}/'
+    print('   ---   ', comment)
+    requests.patch(url=url, data={"comment": comment})
+
+
 def get_start_info():
-    global lieder_account, investors_list, settings
+    global lieder_account, investors_list, settings, start_date, scs_access
+    lieder_account = LIEDER_ACCOUNT
+    investors_list = INVESTOR_LIST
+    settings = SETTINGS
+    start_date = START_DATE
+    scs_access = False
     try:
-        response_source = requests.get(host).json()
-        print(f'[{datetime.now().replace(microsecond=0)}] response:', response_source)
+        url = host + 'last'
+        response_source = requests.get(url).json()
+        if len(response_source) == 0:
+            print(f'[{datetime.now().replace(microsecond=0)}] empty response')
         if len(response_source) > 0:
-            lieder_account = LIEDER_ACCOUNT
-            investors_list = INVESTOR_LIST
-            settings = SETTINGS
             response = response_source[0]
             lieder_account = {
                 'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe',
@@ -177,6 +197,12 @@ def get_start_info():
                 "access": response['access'],
                 "update_at": response['update_at']
             }
+
+            prev_date = settings['update_at'].split('.')
+            start_date = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S") + UTC_OFFSET_TIMEDELTA
+            scs_access = response['access']
+
+            execute_conditions()
         # else:
         #     for _ in investors_list:
         #         if get_investors_positions_count(_) > 0:
@@ -185,6 +211,25 @@ def get_start_info():
         print("ERROR:", ex)
 
 
+def execute_conditions():
+    if settings['blacklist'] == 'Да':  # если в блек листе
+        for _ in investors_list:
+            force_close_all_positions(_)
+        disable_copy()
+    if settings['disconnect'] == 'Да':  # если отключиться
+        if get_investors_positions_count(investors_list[0]) == 0 and \
+                get_investors_positions_count(investors_list[1]) == 0:  # если нет открыты сделок
+            disable_copy()
+
+        if settings['open_trades_disconnect'] == 'Закрыть':  # если сделки закрыть
+            force_close_all_positions(investors_list[0])
+            force_close_all_positions(investors_list[1])
+            disable_copy()
+
+        elif settings['accompany_transactions'] == 'Нет':  # если сделки оставить и не сопровождать
+            disable_copy()
+
+    return investors_list
 
 
 # def check_income_data(json_response):
@@ -448,9 +493,11 @@ def get_positions_profit():
 
 def get_history_profit():
     """Расчет прибыли по истории"""
-    date_from = START_DATE
+    date_from = START_DATE  # .timestamp()
     date_to = datetime.today().replace(microsecond=0) + timedelta(days=1)
+    print(date_from, date_to)
     history_deals = Mt.history_deals_get(date_from, date_to)
+    print(len(history_deals))
     result = 0
     own_positions = []
     try:
@@ -464,8 +511,8 @@ def get_history_profit():
             for pos in own_positions:
                 if pos.type < 2:
                     result += pos.profit  # + pos.commission
-    except AttributeError:
-        print('ERROR in get_history_profit() : wrong positions list')
+    except Exception as ex:
+        print('ERROR get_history_profit():', ex)
         result = None
     return result
 
@@ -476,7 +523,7 @@ def check_stop_limits(investor):
     if start_balance <= 0:
         start_balance = 1
     limit_size = settings['stop_value']
-    calc_limit_in_percent = True if settings['stop_loss'] == 'Проценты' else False
+    calc_limit_in_percent = True if settings['stop_loss'] == 'Процент' else False
     history_profit = get_history_profit()
     current_profit = get_positions_profit()
     # SUMM TOTAL PROFIT
@@ -484,7 +531,7 @@ def check_stop_limits(investor):
         return
     close_positions = False
     total_profit = history_profit + current_profit
-    print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', START_DATE, ':', round(total_profit, 3),
+    print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date, ':', round(total_profit, 2),
           'USD')
     # CHECK LOST SIZE FOR CLOSE ALL
     if total_profit < 0:
@@ -492,13 +539,14 @@ def check_stop_limits(investor):
             current_percent = fabs(total_profit / start_balance) * 100
             if current_percent >= limit_size:
                 close_positions = True
-        else:
-            if fabs(total_profit) >= limit_size:
-                close_positions = True
+        elif fabs(total_profit) >= limit_size:
+            close_positions = True
         # CLOSE ALL POSITIONS
-        active_positions = Mt.positions_get()
         if close_positions:
             print('     Закрытие всех позиций по условию стоп-лосс')
+            set_comment('Закрытие всех позиций по условию стоп-лосс. Убыток торговли c' + str(start_date) + ':' +
+                        str(round(total_profit, 2)) + 'USD')
+            active_positions = Mt.positions_get()
             for act_pos in active_positions:
                 if act_pos.magic == MAGIC:
                     close_position(act_pos)
@@ -524,6 +572,7 @@ def check_transaction(lieder_position):
         transaction_type = -1
     deal_profit = lieder_position.profit
     if transaction_type > 0 > deal_profit:  # если открывать только + и профит < 0
+
         return False
     if deal_profit > 0 > transaction_type:  # если открывать только - и профит > 0
         return False
@@ -551,7 +600,7 @@ def get_deals_volume(investor, lieder_volume, lieder_balance_value):
         ext_k = (investment_size + get_history_profit()) / lieder_balance_value
     else:
         ext_k = (investment_size + get_history_profit() + get_positions_profit()) / lieder_balance_value
-    return round(lieder_volume * multiplier * ext_k, 4)
+    return round(lieder_volume * multiplier * ext_k, 2)
 
 
 # def enable_algotrading():
@@ -722,13 +771,14 @@ async def execute_lieder(sleep_size=5):
         if len(settings) > 0:
             init_res = init_mt(init_data=lieder_account)
             if not init_res:
+                set_comment('Ошибка инициализации лидера')
                 continue
             lieder_balance = Mt.account_info().balance
             lieder_equity = Mt.account_info().equity
             lieder_positions = Mt.positions_get()
             Mt.shutdown()
             print(f'\nLIEDER {lieder_account["login"]} - {len(lieder_positions)} positions',
-                  datetime.now().time())
+                  datetime.now().time().replace(microsecond=0))
             trading_event.set()
         await asyncio.sleep(sleep_size)
 
@@ -736,33 +786,43 @@ async def execute_lieder(sleep_size=5):
 async def execute_investor(investor):
     init_res = init_mt(init_data=investor)
     if not init_res:
+        set_comment('Ошибка инициализации инвестора ' + str(investor['account']))
         return
     # enable_algotrading()
     global output_report
     output_report = []
     investor_positions = Mt.positions_get()
-    print(f' - {investor["login"]} - {len(investor_positions)} positions : {datetime.now()}')
+    print(f' - {investor["login"]} - {len(investor_positions)} positions : {datetime.now().replace(microsecond=0)}')
     check_stop_limits(investor=investor)
-    for pos_lid in lieder_positions:
-        inv_tp = get_pips_tp(pos_lid)
-        inv_sl = get_pips_sl(pos_lid)
-        if not is_position_exist_in_list(position=pos_lid, list_positions=investor_positions, check_for_comment=True):
-
-            if check_transaction(lieder_position=pos_lid):
-                volume = 1.0 \
-                    if settings['changing_multiplier'] == 'Нет' \
-                    else get_deals_volume(investor, lieder_volume=pos_lid.volume,
-                                          lieder_balance_value=lieder_balance
-                                          if settings['multiplier'] == 'Баланс' else lieder_equity)
-                response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
-                                         sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
-                rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
-                output_report.append(rpt)
-
-                if response.retcode == 10014:
-                    print('-----------------VOLUME', volume)
-
-    close_positions_by_lieder(positions_lieder=lieder_positions, positions_investor=Mt.positions_get())
+    if scs_access:
+        for pos_lid in lieder_positions:
+            inv_tp = get_pips_tp(pos_lid)
+            inv_sl = get_pips_sl(pos_lid)
+            if not is_position_exist_in_list(position=pos_lid, list_positions=investor_positions,
+                                             check_for_comment=True):
+                if check_transaction(lieder_position=pos_lid):
+                    volume = 1.0 \
+                        if settings['changing_multiplier'] == 'Нет' \
+                        else get_deals_volume(investor, lieder_volume=pos_lid.volume,
+                                              lieder_balance_value=lieder_balance
+                                              if settings['multiplier'] == 'Баланс' else lieder_equity)
+                    response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
+                                             sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+                    rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
+                    output_report.append(rpt)
+                    msg_ext = ''
+                    if response.retcode == 10014:
+                        msg_ext = ' [volume: ' + str(volume) + ']'
+                        print('----------------- TRY VOLUME', volume)
+                    msg = send_retcodes[response.retcode][1]
+                    set_comment(msg + msg_ext + ' : ' + str(response.retcode))
+                    print(msg + msg_ext + ' : ' + response.retcode)
+                else:
+                    set_comment('Не выполнено условие +/-')
+    else:
+        print('ACCESS DISABLED')
+    if scs_access or settings['accompany_transactions'] == 'Да':
+        close_positions_by_lieder(positions_lieder=lieder_positions, positions_investor=Mt.positions_get())
     if len(output_report) > 0:
         print('    ', output_report)
     Mt.shutdown()
@@ -817,6 +877,6 @@ async def task_manager():
 
 if __name__ == '__main__':
     event_loop = asyncio.new_event_loop()
-    event_loop.create_task(execute_lieder(sleep_size=1))
+    event_loop.create_task(execute_lieder(sleep_size=5))
     event_loop.create_task(task_manager())
     event_loop.run_forever()
