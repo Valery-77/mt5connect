@@ -72,6 +72,71 @@ last_errors = {
     -10003: ('RES_E_INTERNAL_FAIL_CONNECT', 'internal IPC no ipc'),
     -10005: ('RES_E_INTERNAL_FAIL_TIMEOUT', 'internal timeout')}
 
+
+class DealComment:
+    # comment = {
+    #     'lieder_ticket': -1,
+    #     'reason': '',  # Закрыто лидером, Закрыто по условию стоп-лосс
+    # }
+
+    lieder_ticket: int
+    reason: str
+
+    # def __init__(self, ticket: int, reason: str):
+    #     if reason is None or ticket is None:
+    #         self.lieder_ticket = -1
+    #         self.reason = ''
+    #     else:
+    #         self.lieder_ticket = ticket
+    #         self.reason = reason
+
+    def __init__(self):
+        self.lieder_ticket = -1
+        self.reason = ''
+
+    @staticmethod
+    def is_valid_string(string: str):
+        if len(string) > 0:
+            sliced = string.split('|')
+            if len(sliced) == 2:
+                try:
+                    ticket = int(sliced[0])
+                    if ticket < 0:
+                        return False
+                except ValueError:
+                    return False
+        return True
+
+    def string(self):
+        return f'{self.lieder_ticket}|{self.reason}]'
+
+    def obj(self):
+        return {'lieder_ticket': self.lieder_ticket, 'reason': self.reason}
+
+    def set_from_string(self, string: str):
+        if '|' in string:
+            split_str = string.split('|')
+            lid_str = split_str[0]
+            cause = split_str[1]
+        elif len(string) > 0:
+            lid_str = string
+            cause = ''
+        else:
+            lid_str = '-1'
+            cause = ''
+        try:
+            self.lieder_ticket = int(lid_str)
+            self.reason = cause
+        except ValueError:
+            self.lieder_ticket = -1
+            self.reason = ''
+        return self
+
+    def set_from_ticket(self, ticket: int):
+        self.lieder_ticket = ticket
+        self.reason = ''
+
+
 TIMEOUT_INIT = 10_000  # время ожидания при инициализации терминала (рекомендуемое 60_000 millisecond)
 MAGIC = 9876543210  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
@@ -205,14 +270,14 @@ def set_comment(comment):
 
 def execute_conditions(investor):
     if investor['blacklist'] == 'Да':  # если в блек листе
-        force_close_all_positions(investor)
+        force_close_all_positions(investor, reason='Блеклист')
         disable_copy(investor)
     if investor['disconnect'] == 'Да':  # если отключиться
         if get_investors_positions_count(investor) == 0:  # если нет открыты сделок
             disable_copy(investor)
 
         if investor['open_trades_disconnect'] == 'Закрыть':  # если сделки закрыть
-            force_close_all_positions(investor)
+            force_close_all_positions(investor, 'Закрыто по команде пользователя')
             disable_copy(investor)
 
         elif investor['accompany_transactions'] == 'Нет':  # если сделки оставить и не сопровождать
@@ -494,7 +559,7 @@ def is_position_exist_in_list(position, list_positions, check_for_comment=False)
 
 
 def is_position_exist_in_history(position, check_for_comment=False):
-    date_from = datetime(2023, 2, 18, 1, 10)  # start_date
+    date_from = start_date  # datetime(2023, 2, 18, 1, 10)
     date_to = datetime.today().replace(microsecond=0) + timedelta(days=1)
     history_deals = Mt.history_deals_get(date_from, date_to)
     # print('--', date_from, '-', position.ticket)
@@ -503,7 +568,7 @@ def is_position_exist_in_history(position, check_for_comment=False):
     try:
         if len(history_deals) > 0:
             for pos in history_deals:
-                if pos.magic == MAGIC:
+                if pos.magic == MAGIC and DealComment.is_valid_string(pos.comment):
                     value = int(pos.comment) if check_for_comment else pos.ticket
                     if position.ticket == value:
                         return True
@@ -544,7 +609,7 @@ def get_history_profit():
     try:
         if len(history_deals) > 0:
             for pos in history_deals:
-                if pos.magic == MAGIC:
+                if pos.magic == MAGIC and DealComment.is_valid_string(pos.comment):
                     linked_pos = Mt.history_deals_get(position=pos.position_id)
                     for lp in linked_pos:
                         own_positions.append(lp)
@@ -590,7 +655,7 @@ def check_stop_limits(investor):
             active_positions = Mt.positions_get()
             for act_pos in active_positions:
                 if act_pos.magic == MAGIC:
-                    close_position(act_pos)
+                    close_position(act_pos, 'Закрытие позиции по условию стоп-лосс')
             if investor['open_trades'] == 'Закрыть и отключить':
                 disable_copy(investor)
 
@@ -645,7 +710,7 @@ def get_deals_volume(investor, lieder_volume, lieder_balance_value):
     return result
 
 
-def open_position(symbol, deal_type, lot, sender_ticket, tp=0, sl=0):
+def open_position(symbol, deal_type, lot, sender_ticket: int, tp=0, sl=0):
     """Открытие позиции"""
     point = Mt.symbol_info(symbol).point
     price = tp_in = sl_in = 0.0
@@ -663,6 +728,9 @@ def open_position(symbol, deal_type, lot, sender_ticket, tp=0, sl=0):
             tp_in = price - tp * point
         if sl != 0:
             sl_in = price + sl * point
+    comment = DealComment()
+    comment.lieder_ticket = sender_ticket
+    comment.reason = 'Открыто СКС'
     request = {
         "action": Mt.TRADE_ACTION_DEAL,
         "symbol": symbol,
@@ -673,7 +741,7 @@ def open_position(symbol, deal_type, lot, sender_ticket, tp=0, sl=0):
         "tp": tp_in,
         "deviation": DEVIATION,
         "magic": MAGIC,
-        "comment": str(sender_ticket),
+        "comment": comment.string(),
         "type_time": Mt.ORDER_TIME_GTC,
         "type_filling": Mt.ORDER_FILLING_RETURN,
     }
@@ -681,9 +749,14 @@ def open_position(symbol, deal_type, lot, sender_ticket, tp=0, sl=0):
     return result
 
 
-def close_position(position):
+def close_position(position, reason):
     """Закрытие указанной позиции"""
     tick = Mt.symbol_info_tick(position.symbol)
+    new_comment_str = position.comment
+    if DealComment.is_valid_string(position.comment):
+        comment = DealComment().set_from_string(position.comment)
+        comment.reason = reason
+        new_comment_str = comment.string()
     request = {
         'action': Mt.TRADE_ACTION_DEAL,
         'position': position.ticket,
@@ -693,7 +766,7 @@ def close_position(position):
         'price': tick.ask if position.type == 1 else tick.bid,
         'deviation': DEVIATION,
         'magic:': MAGIC,
-        'comment': position.comment,  # 'CLOSED_BY_EXPERT',
+        'comment': new_comment_str,  # 'CLOSED_BY_EXPERT',
         'type_tim': Mt.ORDER_TIME_GTC,
         'type_filing': Mt.ORDER_FILLING_IOC
     }
@@ -701,7 +774,7 @@ def close_position(position):
     return result
 
 
-def force_close_all_positions(investor):
+def force_close_all_positions(investor, reason):
     """Принудительное закрытие всех позиций аккаунта"""
     init_res = init_mt(init_data=investor)
     if init_res:
@@ -709,7 +782,7 @@ def force_close_all_positions(investor):
         if len(positions) > 0:
             for position in positions:
                 if position.magic == MAGIC:
-                    close_position(position)
+                    close_position(position, reason=reason)
         Mt.shutdown()
 
 
@@ -726,7 +799,7 @@ def close_positions_by_lieder(positions_lieder, positions_investor):
             non_existed_positions.append(ip)
     for pos in non_existed_positions:
         print('     close position:', pos.comment)
-        close_position(pos)
+        close_position(pos, reason='Закрыто инвестором')
 
 
 async def source_setup():
@@ -980,7 +1053,7 @@ async def update_setup():
         await source_setup()
 
 
-async def execute_lieder(sleep=sleep_lieder_update):
+async def update_lieder_info(sleep=sleep_lieder_update):
     global lieder_balance, lieder_equity, lieder_positions, source
     while True:
         if len(source) > 0:
@@ -1004,16 +1077,13 @@ async def execute_investor(investor):
     if not init_res:
         set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
-    # print(str(investor['login']))
-    # print(get_history_profit())
-    # return
     # enable_algotrading()
     global output_report
     output_report = []
     investor_positions = Mt.positions_get()
     print(f' - {investor["login"]} - {len(investor_positions)} positions : {datetime.now().replace(microsecond=0)}')
-    check_stop_limits(investor=investor)
     if investor['dcs_access']:
+        execute_conditions(investor=investor)  # проверка условий кейса закрытия
         for pos_lid in lieder_positions:
             inv_tp = get_pips_tp(pos_lid)
             inv_sl = get_pips_sl(pos_lid)
@@ -1042,10 +1112,17 @@ async def execute_investor(investor):
                     print(msg + msg_ext + ' : ' + str(response.retcode))
                 else:
                     set_comment('Не выполнено условие +/-')
+        check_stop_limits(investor=investor)  # проверка условий стоп-лосс
     else:
         print('ACCESS DISABLED')
-    if investor['dcs_access'] or investor['accompany_transactions'] == 'Да':
-        close_positions_by_lieder(positions_lieder=lieder_positions, positions_investor=Mt.positions_get())
+
+    # закрытие позиций от лидера
+    if investor['dcs_access'] or \
+            (not investor['dcs_access']
+             and investor['accompany_transactions'] == 'Да'):  # если сопровождать сделки или доступ есть
+        close_positions_by_lieder(positions_lieder=lieder_positions,
+                                  positions_investor=Mt.positions_get())
+
     if len(output_report) > 0:
         print('    ', output_report)
     Mt.shutdown()
@@ -1061,9 +1138,9 @@ async def task_manager():
 
 if __name__ == '__main__':
     print(f'\nСКС запущена [{start_date}]. Обновление Лидера {sleep_lieder_update}с.')
-    set_dummy_data()
+    set_dummy_data()  # для теста без сервера раскомментировать
     event_loop = asyncio.new_event_loop()
-    # event_loop.create_task(update_setup())
-    event_loop.create_task(execute_lieder())
+    # event_loop.create_task(update_setup())    # для теста без сервера закомментировать
+    event_loop.create_task(update_lieder_info())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
