@@ -1,4 +1,5 @@
 import asyncio
+import aiohttp
 from datetime import datetime, timedelta
 from math import fabs
 import MetaTrader5 as Mt
@@ -74,33 +75,116 @@ last_errors = {
 TIMEOUT_INIT = 10_000  # время ожидания при инициализации терминала (рекомендуемое 60_000 millisecond)
 MAGIC = 9876543210  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
-START_DATE = datetime(2023, 2, 17)  # начальное время с которого ведется расчет по истории
-UTC_OFFSET_TIMEDELTA = datetime.now() -datetime.utcnow()
 
-LIEDER_ACCOUNT = {'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe'}
-INVESTOR_LIST = [{'terminal_path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe'},
-                 {'terminal_path': r'C:\Program Files\MetaTrader 5_3\terminal64.exe'}]
-SETTINGS = {}
-
-lieder_account = {}
-investors_list = [{}, {}]
-settings = {}
-
-# investor_accounts = []
 output_report = []  # сюда выводится отчет
-# report_stamp = {'id': -1, 'code': 0, 'message': 'null'}
 lieder_balance = 0  # default var
 lieder_equity = 0  # default var
-start_date = START_DATE  # default var
 lieder_positions = []  # default var
-scs_access = False  # доступ к СКС
+start_date = datetime.now().replace(microsecond=0)  # default var
 trading_event = asyncio.Event()  # init async event
+
+sleep_lieder_update = 1  # пауза для обновления лидера
+send_messages = False  # отправлять сообщения в базу
+
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
+source = {
+    # 'lieder': {},
+    # 'investors': [{}, {}],
+    # 'settings': {}
+}
 
-def disable_copy():
-    global scs_access
-    scs_access = False
+
+# def enable_algotrading():
+#     """Принудительное включение режима Аготрейдинга на терминале"""
+#     try:
+#         if not Mt.terminal_info().trade_allowed:
+#             mt_wmcmd_experts = 32851
+#             wm_command = 0x0111
+#             ga_root = 2
+#             terminal_handle = FindWindow('MetaQuotes::MetaTrader::5.00', None)
+#             PostMessage(GetAncestor(terminal_handle, ga_root), wm_command, mt_wmcmd_experts, 0)
+#     except AttributeError:
+#         print(f'Невозможно подключиться к терминалу : {datetime.now()}')
+#         exit()
+
+
+def set_dummy_data():
+    global send_messages, start_date
+    send_messages = False
+    investment_size = 1000
+    source['lieder'] = {
+        'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe',
+        'login': 66587203,
+        'password': '3hksvtko',
+        'server': 'MetaQuotes-Demo'
+    }
+    source['investors'] = [
+        {
+            'terminal_path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe',
+            'login': 65766034,
+            'password': 'h0nmgczo',
+            'server': 'MetaQuotes-Demo',
+            'investment_size': investment_size,
+            'dcs_access': True,
+
+            'deal_in_plus': 0.1,
+            'deal_in_minus': -0.1,
+            'waiting_time': 1,
+            'ask_an_investor': 'Все',
+            'price_refund': 'Да',
+            # -----------------------------------------
+            'multiplier': 'Баланс',
+            'multiplier_value': 100.0,
+            'changing_multiplier': 'Да',
+            # -----------------------------------------
+            'stop_loss': 'Процент',
+            'stop_value': 20.0,
+            'open_trades': 'Закрыть',
+            # -----------------------------------------
+            'shutdown_initiator': 'Инвестор',
+            'disconnect': 'Нет',
+            'open_trades_disconnect': 'Закрыть',
+            'notification': 'Нет',
+            'blacklist': 'Нет',
+            'accompany_transactions': 'Нет',
+            # -----------------------------------------=
+            'no_exchange_connection': 'Нет',
+            'api_key_expired': 'Нет',
+            # -----------------------------------------
+            'closed_deals_myself': 'Переоткрывать',
+            'reconnected': 'Переоткрывать',
+            # -----------------------------------------
+            'recovery_model': 'Не корректировать',
+            'buy_hold_model': 'Не корректировать',
+            # -----------------------------------------
+            'not_enough_margin': 'Минимальный объем',
+            'accounts_in_diff_curr': 'Доллары',
+            # -----------------------------------------
+            'synchronize_deals': 'Нет',
+            'deals_not_opened': 'Нет',
+            'closed_deal_investor': 'Нет',
+            # -----------------------------------------
+        }
+    ]
+
+    source['investors'].append(source['investors'][0].copy())
+    source['investors'][1]['terminal_path'] = r'C:\Program Files\MetaTrader 5_3\terminal64.exe'
+    source['investors'][1]['login'] = 5009600048
+    source['investors'][1]['password'] = 'sbbsapv5'
+
+    source['settings'] = {
+        "relevance": True,
+        "update_at": str(start_date),
+        "create_at": str(start_date)
+        # "access": response['access'],
+    }
+
+
+def disable_copy(investor):
+    if send_messages:
+        return
+    investor['dcs_access'] = False
     url = host + 'list'
     response = requests.get(url).json()
     numb = response[-1]['id']
@@ -109,124 +193,30 @@ def disable_copy():
 
 
 def set_comment(comment):
+    if not send_messages:
+        return
     url = host + 'list'
     response = requests.get(url).json()
     numb = response[-1]['id']
     url = host + f'patch/{numb}/'
-    print('   ---   ', comment)
+    # print('   ---   ', comment)
     requests.patch(url=url, data={"comment": comment})
 
 
-def get_start_info():
-    global lieder_account, investors_list, settings, start_date, scs_access
-    lieder_account = LIEDER_ACCOUNT
-    investors_list = INVESTOR_LIST
-    settings = SETTINGS
-    start_date = START_DATE
-    scs_access = False
-    try:
-        url = host + 'last'
-        response_source = requests.get(url).json()
-        if len(response_source) == 0:
-            print(f'[{datetime.now().replace(microsecond=0)}] empty response')
-        if len(response_source) > 0:
-            response = response_source[0]
-            lieder_account = {
-                'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe',
-                'login': int(response['leader_login']),
-                'password': response['leader_password'],
-                'server': response['leader_server']
-            }
-            investors_list = [
-                {
-                    'terminal_path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe',
-                    'login': int(response['investor_one_login']),
-                    'password': response['investor_one_password'],
-                    'server': response['investor_one_server'],
-                    'investment_size': float(response['investment_one_size'])
-                },
-                {
-                    'terminal_path': r'C:\Program Files\MetaTrader 5_3\terminal64.exe',
-                    'login': int(response['investor_two_login']),
-                    'password': response['investor_two_password'],
-                    'server': response['investor_two_server'],
-                    'investment_size': float(response['investment_two_size'])
-                }
-            ]
-            settings = {
-                "deal_in_plus": float(response['deal_in_plus']),
-                "deal_in_minus": float(response['deal_in_minus']),
-                "waiting_time": int(response['waiting_time']),
-                "ask_an_investor": response['ask_an_investor'],
-                "price_refund": response['price_refund'],
-                "multiplier": response['multiplier'],
-                "multiplier_value": float(response['multiplier_value']),
-                "changing_multiplier": response['changing_multiplier'],
-                "stop_loss": response['stop_loss'],
-                "stop_value": float(response['stop_value']),
-                "open_trades": response['open_trades'],
-                "shutdown_initiator": response['shutdown_initiator'],
-                "disconnect": response['disconnect'],
-                "open_trades_disconnect": response['open_trades_disconnect'],
-                "notification": response['notification'],
-                "blacklist": response['blacklist'],
-                "accompany_transactions": response['accompany_transactions'],
-                "no_exchange_connection": response['no_exchange_connection'],
-                "api_key_expired": response['api_key_expired'],
-                "closed_deals_myself": response['closed_deals_myself'],
-                "reconnected": response['reconnected'],
-                "recovery_model": response['recovery_model'],
-                "buy_hold_model": response['buy_hold_model'],
-                "not_enough_margin": response['not_enough_margin'],
-                "accounts_in_diff_curr": response['accounts_in_diff_curr'],
-                "synchronize_deals": response['synchronize_deals'],
-                "deals_not_opened": response['deals_not_opened'],
-                "closed_deal_investor": response['closed_deal_investor'],
-                "opening_deal": response['opening_deal'],
-                "closing_deal": response['closing_deal'],
-                "target_and_stop": response['target_and_stop'],
-                "signal_relevance": response['signal_relevance'],
-                "profitability": response['profitability'],
-                "risk": response['risk'],
-                "profit": response['profit'],
-                "comment": response['comment'],
-                "relevance": response['relevance'],
-                "access": response['access'],
-                "update_at": response['update_at']
-            }
+def execute_conditions(investor):
+    if investor['blacklist'] == 'Да':  # если в блек листе
+        force_close_all_positions(investor)
+        disable_copy(investor)
+    if investor['disconnect'] == 'Да':  # если отключиться
+        if get_investors_positions_count(investor) == 0:  # если нет открыты сделок
+            disable_copy(investor)
 
-            prev_date = settings['update_at'].split('.')
-            start_date = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S") + UTC_OFFSET_TIMEDELTA
-            scs_access = response['access']
+        if investor['open_trades_disconnect'] == 'Закрыть':  # если сделки закрыть
+            force_close_all_positions(investor)
+            disable_copy(investor)
 
-            execute_conditions()
-        # else:
-        #     for _ in investors_list:
-        #         if get_investors_positions_count(_) > 0:
-        #             force_close_all_positions(_)
-    except Exception as ex:
-        print("ERROR:", ex)
-
-
-def execute_conditions():
-    if settings['blacklist'] == 'Да':  # если в блек листе
-        for _ in investors_list:
-            force_close_all_positions(_)
-        disable_copy()
-    if settings['disconnect'] == 'Да':  # если отключиться
-        if get_investors_positions_count(investors_list[0]) == 0 and \
-                get_investors_positions_count(investors_list[1]) == 0:  # если нет открыты сделок
-            disable_copy()
-
-        if settings['open_trades_disconnect'] == 'Закрыть':  # если сделки закрыть
-            force_close_all_positions(investors_list[0])
-            force_close_all_positions(investors_list[1])
-            disable_copy()
-
-        elif settings['accompany_transactions'] == 'Нет':  # если сделки оставить и не сопровождать
-            disable_copy()
-
-    return investors_list
+        elif investor['accompany_transactions'] == 'Нет':  # если сделки оставить и не сопровождать
+            disable_copy(investor)
 
 
 # def check_income_data(json_response):
@@ -448,6 +438,22 @@ def execute_conditions():
 #     # "update_at": "2023-02-14T12:19:22.704830Z"
 
 
+def init_mt(init_data, need_login=False):
+    """Инициализация терминала"""
+    if Mt.initialize(login=init_data['login'], server=init_data['server'], password=init_data['password'],
+                     path=init_data['terminal_path'], timeout=TIMEOUT_INIT):
+        # print(f'INVESTOR account {init_data["login"]} : {datetime.now()}')
+        if need_login:
+            if not Mt.login(login=init_data['login'], server=init_data['server'], password=init_data['password']):
+                print('Login ERROR', Mt.last_error())
+    else:
+        print(f'>>>>> account {init_data["login"]} : {datetime.now()} : ERROR', Mt.last_error(),
+              f': timeout = {TIMEOUT_INIT}')
+        return False
+        # exit()
+    return True
+
+
 def get_pips_tp(position, price=None):
     """Расчет Тейк-профит в пунктах"""
     if price is None:
@@ -466,6 +472,46 @@ def get_pips_sl(position, price=None):
     if position.sl > 0:
         result = round(fabs(price - position.sl) / Mt.symbol_info(position.symbol).point)
     return result
+
+
+def get_investors_positions_count(investor):
+    """Количество открытых позиций"""
+    init_res = init_mt(init_data=investor)
+    return Mt.positions_total() if init_res else -1
+
+
+def is_position_exist_in_list(position, list_positions, check_for_comment=False):
+    if len(list_positions) <= 0:
+        return False
+    try:
+        for pos in list_positions:
+            value = int(pos.comment) if check_for_comment else pos.ticket
+            if position.ticket == value:
+                return True
+    except ValueError:
+        return False
+    return False
+
+
+def is_position_exist_in_history(position, check_for_comment=False):
+    date_from = datetime(2023, 2, 18, 1, 10)  # start_date
+    date_to = datetime.today().replace(microsecond=0) + timedelta(days=1)
+    history_deals = Mt.history_deals_get(date_from, date_to)
+    # print('--', date_from, '-', position.ticket)
+    # for _ in history_deals:
+    #     print(history_deals.index(_), datetime.fromtimestamp(_.time), _.comment)
+    try:
+        if len(history_deals) > 0:
+            for pos in history_deals:
+                if pos.magic == MAGIC:
+                    value = int(pos.comment) if check_for_comment else pos.ticket
+                    if position.ticket == value:
+                        return True
+        else:
+            return False
+    except ValueError:
+        return False
+    return False
 
 
 def get_positions_profit():
@@ -490,11 +536,9 @@ def get_positions_profit():
 
 def get_history_profit():
     """Расчет прибыли по истории"""
-    date_from = START_DATE  # .timestamp()
+    date_from = start_date
     date_to = datetime.today().replace(microsecond=0) + timedelta(days=1)
-    print(date_from, date_to)
     history_deals = Mt.history_deals_get(date_from, date_to)
-    print(len(history_deals))
     result = 0
     own_positions = []
     try:
@@ -519,8 +563,8 @@ def check_stop_limits(investor):
     start_balance = investor['investment_size']
     if start_balance <= 0:
         start_balance = 1
-    limit_size = settings['stop_value']
-    calc_limit_in_percent = True if settings['stop_loss'] == 'Процент' else False
+    limit_size = investor['stop_value']
+    calc_limit_in_percent = True if investor['stop_loss'] == 'Процент' else False
     history_profit = get_history_profit()
     current_profit = get_positions_profit()
     # SUMM TOTAL PROFIT
@@ -547,15 +591,15 @@ def check_stop_limits(investor):
             for act_pos in active_positions:
                 if act_pos.magic == MAGIC:
                     close_position(act_pos)
-            if settings['open_trades'] == 'Закрыть и отключить':
-                disable_copy()
+            if investor['open_trades'] == 'Закрыть и отключить':
+                disable_copy(investor)
 
 
-def check_transaction(lieder_position):
+def check_transaction(investor, lieder_position):
     """Проверка открытия позиции"""
-    price_refund = True if settings['price_refund'] == 'Да' else False
+    price_refund = True if investor['price_refund'] == 'Да' else False
     if not price_refund:  # если не возврат цены
-        timeout = settings['waiting_time'] * 60
+        timeout = investor['waiting_time'] * 60
         deal_time = lieder_position.time_update
         curr_time = round(datetime.timestamp(datetime.now().replace(microsecond=0)))
         delta_time = curr_time - deal_time
@@ -563,9 +607,9 @@ def check_transaction(lieder_position):
             return False
 
     transaction_type = 0
-    if settings['ask_an_investor'] == 'Плюс':
+    if investor['ask_an_investor'] == 'Плюс':
         transaction_type = 1
-    elif settings['ask_an_investor'] == 'Минус':
+    elif investor['ask_an_investor'] == 'Минус':
         transaction_type = -1
     deal_profit = lieder_position.profit
     if transaction_type > 0 > deal_profit:  # если открывать только + и профит < 0
@@ -574,8 +618,8 @@ def check_transaction(lieder_position):
     if deal_profit > 0 > transaction_type:  # если открывать только - и профит > 0
         return False
 
-    transaction_plus = settings['deal_in_plus']
-    transaction_minus = settings['deal_in_minus']
+    transaction_plus = investor['deal_in_plus']
+    transaction_minus = investor['deal_in_minus']
     price_open = lieder_position.price_open
     price_current = lieder_position.price_current
 
@@ -589,45 +633,16 @@ def check_transaction(lieder_position):
 
 def get_deals_volume(investor, lieder_volume, lieder_balance_value):
     """Расчет множителя"""
-    multiplier = settings['multiplier_value']
-    get_for_balance = True if settings['multiplier'] == 'Баланс' else False
+    multiplier = investor['multiplier_value']
+    get_for_balance = True if investor['multiplier'] == 'Баланс' else False
     investment_size = investor['investment_size']
-    ext_k = 1.0
+    # ext_k = 1.0
     if get_for_balance:
         ext_k = (investment_size + get_history_profit()) / lieder_balance_value
     else:
         ext_k = (investment_size + get_history_profit() + get_positions_profit()) / lieder_balance_value
-    return round(lieder_volume * multiplier * ext_k, 2)
-
-
-# def enable_algotrading():
-#     """Принудительное включение режима Аготрейдинга на терминале"""
-#     try:
-#         if not Mt.terminal_info().trade_allowed:
-#             mt_wmcmd_experts = 32851
-#             wm_command = 0x0111
-#             ga_root = 2
-#             terminal_handle = FindWindow('MetaQuotes::MetaTrader::5.00', None)
-#             PostMessage(GetAncestor(terminal_handle, ga_root), wm_command, mt_wmcmd_experts, 0)
-#     except AttributeError:
-#         print(f'Невозможно подключиться к терминалу : {datetime.now()}')
-#         exit()
-
-
-def init_mt(init_data, need_login=False):
-    """Инициализация терминала"""
-    if Mt.initialize(login=init_data['login'], server=init_data['server'], password=init_data['password'],
-                     path=init_data['terminal_path'], timeout=TIMEOUT_INIT):
-        # print(f'INVESTOR account {init_data["login"]} : {datetime.now()}')
-        if need_login:
-            if not Mt.login(login=init_data['login'], server=init_data['server'], password=init_data['password']):
-                print('Login ERROR', Mt.last_error())
-    else:
-        print(f'>>>>> account {init_data["login"]} : {datetime.now()} : ERROR', Mt.last_error(),
-              f': timeout = {TIMEOUT_INIT}')
-        return False
-        # exit()
-    return True
+    result = round(lieder_volume * multiplier * ext_k, 2)
+    return result
 
 
 def open_position(symbol, deal_type, lot, sender_ticket, tp=0, sl=0):
@@ -678,18 +693,12 @@ def close_position(position):
         'price': tick.ask if position.type == 1 else tick.bid,
         'deviation': DEVIATION,
         'magic:': MAGIC,
-        'comment': 'CLOSED_BY_EXPERT',  # position.comment,
+        'comment': position.comment,  # 'CLOSED_BY_EXPERT',
         'type_tim': Mt.ORDER_TIME_GTC,
         'type_filing': Mt.ORDER_FILLING_IOC
     }
     result = Mt.order_send(request)
     return result
-
-
-def get_investors_positions_count(investor):
-    """Количество открытых позиций"""
-    init_res = init_mt(init_data=investor)
-    return Mt.positions_total() if init_res else -1
 
 
 def force_close_all_positions(investor):
@@ -720,63 +729,306 @@ def close_positions_by_lieder(positions_lieder, positions_investor):
         close_position(pos)
 
 
-def is_position_exist_in_list(position, list_positions, check_for_comment=False):
-    if len(list_positions) <= 0:
-        return False
-    try:
-        for pos in list_positions:
-            value = int(pos.comment) if check_for_comment else pos.ticket
-            if position.ticket == value:
-                return True
-    except ValueError:
-        return False
-    return False
+async def source_setup():
+    global start_date, source
+    main_source = {}
+    url = host + 'last'
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as get_response:
+            response = await get_response.json()  # .text()
+    if len(response) > 0:
+        response = response[0]
+        main_source['lieder'] = {
+            'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe',
+            'login': int(response['leader_login']),
+            'password': response['leader_password'],
+            'server': response['leader_server']
+        }
+        main_source['investors'] = [
+            {
+                'terminal_path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe',
+                'login': int(response['investor_one_login']),
+                'password': response['investor_one_password'],
+                'server': response['investor_one_server'],
+                'investment_size': float(response['investment_one_size']),
+                'dcs_access': response['access'],
+
+                "deal_in_plus": float(response['deal_in_plus']),
+                "deal_in_minus": float(response['deal_in_minus']),
+                "waiting_time": int(response['waiting_time']),
+                "ask_an_investor": response['ask_an_investor'],
+                "price_refund": response['price_refund'],
+                "multiplier": response['multiplier'],
+                "multiplier_value": float(response['multiplier_value']),
+                "changing_multiplier": response['changing_multiplier'],
+                "stop_loss": response['stop_loss'],
+                "stop_value": float(response['stop_value']),
+                "open_trades": response['open_trades'],
+                "shutdown_initiator": response['shutdown_initiator'],
+                "disconnect": response['disconnect'],
+                "open_trades_disconnect": response['open_trades_disconnect'],
+                "notification": response['notification'],
+                "blacklist": response['blacklist'],
+                "accompany_transactions": response['accompany_transactions'],
+                "no_exchange_connection": response['no_exchange_connection'],
+                "api_key_expired": response['api_key_expired'],
+                "closed_deals_myself": response['closed_deals_myself'],
+                "reconnected": response['reconnected'],
+                "recovery_model": response['recovery_model'],
+                "buy_hold_model": response['buy_hold_model'],
+                "not_enough_margin": response['not_enough_margin'],
+                "accounts_in_diff_curr": response['accounts_in_diff_curr'],
+                "synchronize_deals": response['synchronize_deals'],
+                "deals_not_opened": response['deals_not_opened'],
+                "closed_deal_investor": response['closed_deal_investor'],
+                "opening_deal": response['opening_deal'],
+                "closing_deal": response['closing_deal'],
+                "target_and_stop": response['target_and_stop'],
+                "signal_relevance": response['signal_relevance'],
+                "profitability": response['profitability'],
+                "risk": response['risk'],
+                "profit": response['profit'],
+                "comment": response['comment'],
+            },
+            {
+                'terminal_path': r'C:\Program Files\MetaTrader 5_3\terminal64.exe',
+                'login': int(response['investor_two_login']),
+                'password': response['investor_two_password'],
+                'server': response['investor_two_server'],
+                'investment_size': float(response['investment_two_size']),
+                'dcs_access': response['access'],
+
+                "deal_in_plus": float(response['deal_in_plus']),
+                "deal_in_minus": float(response['deal_in_minus']),
+                "waiting_time": int(response['waiting_time']),
+                "ask_an_investor": response['ask_an_investor'],
+                "price_refund": response['price_refund'],
+                "multiplier": response['multiplier'],
+                "multiplier_value": float(response['multiplier_value']),
+                "changing_multiplier": response['changing_multiplier'],
+                "stop_loss": response['stop_loss'],
+                "stop_value": float(response['stop_value']),
+                "open_trades": response['open_trades'],
+                "shutdown_initiator": response['shutdown_initiator'],
+                "disconnect": response['disconnect'],
+                "open_trades_disconnect": response['open_trades_disconnect'],
+                "notification": response['notification'],
+                "blacklist": response['blacklist'],
+                "accompany_transactions": response['accompany_transactions'],
+                "no_exchange_connection": response['no_exchange_connection'],
+                "api_key_expired": response['api_key_expired'],
+                "closed_deals_myself": response['closed_deals_myself'],
+                "reconnected": response['reconnected'],
+                "recovery_model": response['recovery_model'],
+                "buy_hold_model": response['buy_hold_model'],
+                "not_enough_margin": response['not_enough_margin'],
+                "accounts_in_diff_curr": response['accounts_in_diff_curr'],
+                "synchronize_deals": response['synchronize_deals'],
+                "deals_not_opened": response['deals_not_opened'],
+                "closed_deal_investor": response['closed_deal_investor'],
+                "opening_deal": response['opening_deal'],
+                "closing_deal": response['closing_deal'],
+                "target_and_stop": response['target_and_stop'],
+                "signal_relevance": response['signal_relevance'],
+                "profitability": response['profitability'],
+                "risk": response['risk'],
+                "profit": response['profit'],
+                "comment": response['comment'],
+            }
+        ]
+        main_source['settings'] = {
+            "relevance": response['relevance'],
+            "update_at": response['update_at'],
+            "created_at": response['created_at']
+            # "access": response['access'],
+        }
+        prev_date = main_source['settings']['created_at'].split('.')
+        start_date = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S")
+    # else:
+    #     print(f'[{datetime.now().replace(microsecond=0)}] empty response')
+    source = main_source
 
 
-async def execute_lieder(sleep_size=5):
-    global lieder_balance, lieder_equity
-    global lieder_positions
-    global investors_list
+# def http_get_setup():
+#     global start_date
+#     main_source = {}
+#     try:
+#         url = host + 'last'
+#         # response_source = requests.get(url, timeout=10).json()
+#         response_source = get_request(url)
+#         print('REQ:', get_request(url=url))
+#         exit()
+#         if len(response_source) == 0:
+#             main_source = {}
+#             print(f'[{datetime.now().replace(microsecond=0)}] empty response')
+#         else:
+#             response = response_source[0]
+#             main_source['lieder'] = {
+#                 'terminal_path': r'C:\Program Files\MetaTrader 5\terminal64.exe',
+#                 'login': int(response['leader_login']),
+#                 'password': response['leader_password'],
+#                 'server': response['leader_server']
+#             }
+#             main_source['investors'] = [
+#                 {
+#                     'terminal_path': r'C:\Program Files\MetaTrader 5_2\terminal64.exe',
+#                     'login': int(response['investor_one_login']),
+#                     'password': response['investor_one_password'],
+#                     'server': response['investor_one_server'],
+#                     'investment_size': float(response['investment_one_size']),
+#                     'dcs_access': response['access'],
+#
+#                     "deal_in_plus": float(response['deal_in_plus']),
+#                     "deal_in_minus": float(response['deal_in_minus']),
+#                     "waiting_time": int(response['waiting_time']),
+#                     "ask_an_investor": response['ask_an_investor'],
+#                     "price_refund": response['price_refund'],
+#                     "multiplier": response['multiplier'],
+#                     "multiplier_value": float(response['multiplier_value']),
+#                     "changing_multiplier": response['changing_multiplier'],
+#                     "stop_loss": response['stop_loss'],
+#                     "stop_value": float(response['stop_value']),
+#                     "open_trades": response['open_trades'],
+#                     "shutdown_initiator": response['shutdown_initiator'],
+#                     "disconnect": response['disconnect'],
+#                     "open_trades_disconnect": response['open_trades_disconnect'],
+#                     "notification": response['notification'],
+#                     "blacklist": response['blacklist'],
+#                     "accompany_transactions": response['accompany_transactions'],
+#                     "no_exchange_connection": response['no_exchange_connection'],
+#                     "api_key_expired": response['api_key_expired'],
+#                     "closed_deals_myself": response['closed_deals_myself'],
+#                     "reconnected": response['reconnected'],
+#                     "recovery_model": response['recovery_model'],
+#                     "buy_hold_model": response['buy_hold_model'],
+#                     "not_enough_margin": response['not_enough_margin'],
+#                     "accounts_in_diff_curr": response['accounts_in_diff_curr'],
+#                     "synchronize_deals": response['synchronize_deals'],
+#                     "deals_not_opened": response['deals_not_opened'],
+#                     "closed_deal_investor": response['closed_deal_investor'],
+#                     "opening_deal": response['opening_deal'],
+#                     "closing_deal": response['closing_deal'],
+#                     "target_and_stop": response['target_and_stop'],
+#                     "signal_relevance": response['signal_relevance'],
+#                     "profitability": response['profitability'],
+#                     "risk": response['risk'],
+#                     "profit": response['profit'],
+#                     "comment": response['comment'],
+#                 },
+#                 {
+#                     'terminal_path': r'C:\Program Files\MetaTrader 5_3\terminal64.exe',
+#                     'login': int(response['investor_two_login']),
+#                     'password': response['investor_two_password'],
+#                     'server': response['investor_two_server'],
+#                     'investment_size': float(response['investment_two_size']),
+#                     'dcs_access': response['access'],
+#
+#                     "deal_in_plus": float(response['deal_in_plus']),
+#                     "deal_in_minus": float(response['deal_in_minus']),
+#                     "waiting_time": int(response['waiting_time']),
+#                     "ask_an_investor": response['ask_an_investor'],
+#                     "price_refund": response['price_refund'],
+#                     "multiplier": response['multiplier'],
+#                     "multiplier_value": float(response['multiplier_value']),
+#                     "changing_multiplier": response['changing_multiplier'],
+#                     "stop_loss": response['stop_loss'],
+#                     "stop_value": float(response['stop_value']),
+#                     "open_trades": response['open_trades'],
+#                     "shutdown_initiator": response['shutdown_initiator'],
+#                     "disconnect": response['disconnect'],
+#                     "open_trades_disconnect": response['open_trades_disconnect'],
+#                     "notification": response['notification'],
+#                     "blacklist": response['blacklist'],
+#                     "accompany_transactions": response['accompany_transactions'],
+#                     "no_exchange_connection": response['no_exchange_connection'],
+#                     "api_key_expired": response['api_key_expired'],
+#                     "closed_deals_myself": response['closed_deals_myself'],
+#                     "reconnected": response['reconnected'],
+#                     "recovery_model": response['recovery_model'],
+#                     "buy_hold_model": response['buy_hold_model'],
+#                     "not_enough_margin": response['not_enough_margin'],
+#                     "accounts_in_diff_curr": response['accounts_in_diff_curr'],
+#                     "synchronize_deals": response['synchronize_deals'],
+#                     "deals_not_opened": response['deals_not_opened'],
+#                     "closed_deal_investor": response['closed_deal_investor'],
+#                     "opening_deal": response['opening_deal'],
+#                     "closing_deal": response['closing_deal'],
+#                     "target_and_stop": response['target_and_stop'],
+#                     "signal_relevance": response['signal_relevance'],
+#                     "profitability": response['profitability'],
+#                     "risk": response['risk'],
+#                     "profit": response['profit'],
+#                     "comment": response['comment'],
+#                 }
+#             ]
+#             main_source['settings'] = {
+#                 "relevance": response['relevance'],
+#                 "update_at": response['update_at'],
+#                 "create_at": response['create_at']
+#                 # "access": response['access'],
+#             }
+#             prev_date = main_source['settings']['create_at'].split('.')
+#             start_date = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S")
+#     except Exception as exc:
+#         main_source = {}
+#         print("ERROR:", exc)
+#     return main_source
+
+
+async def update_setup():
     while True:
-        get_start_info()
-        if len(settings) > 0:
-            init_res = init_mt(init_data=lieder_account)
+        await source_setup()
+
+
+async def execute_lieder(sleep=sleep_lieder_update):
+    global lieder_balance, lieder_equity, lieder_positions, source
+    while True:
+        if len(source) > 0:
+            init_res = init_mt(init_data=source['lieder'])
             if not init_res:
                 set_comment('Ошибка инициализации лидера')
+                await asyncio.sleep(sleep)
                 continue
             lieder_balance = Mt.account_info().balance
             lieder_equity = Mt.account_info().equity
             lieder_positions = Mt.positions_get()
             Mt.shutdown()
-            print(f'\nLIEDER {lieder_account["login"]} - {len(lieder_positions)} positions',
+            print(f'\nLIEDER {source["lieder"]["login"]} - {len(lieder_positions)} positions',
                   datetime.now().time().replace(microsecond=0))
             trading_event.set()
-        await asyncio.sleep(sleep_size)
+        await asyncio.sleep(sleep)
 
 
 async def execute_investor(investor):
     init_res = init_mt(init_data=investor)
     if not init_res:
-        set_comment('Ошибка инициализации инвестора ' + str(investor['account']))
+        set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
+    # print(str(investor['login']))
+    # print(get_history_profit())
+    # return
     # enable_algotrading()
     global output_report
     output_report = []
     investor_positions = Mt.positions_get()
     print(f' - {investor["login"]} - {len(investor_positions)} positions : {datetime.now().replace(microsecond=0)}')
     check_stop_limits(investor=investor)
-    if scs_access:
+    if investor['dcs_access']:
         for pos_lid in lieder_positions:
             inv_tp = get_pips_tp(pos_lid)
             inv_sl = get_pips_sl(pos_lid)
+
+            is_position_exist_in_history(position=pos_lid, check_for_comment=True)
+
             if not is_position_exist_in_list(position=pos_lid, list_positions=investor_positions,
                                              check_for_comment=True):
-                if check_transaction(lieder_position=pos_lid):
+                # or not is_position_exist_in_history(position=pos_lid, check_for_comment=True):
+                if check_transaction(investor=investor, lieder_position=pos_lid):
                     volume = 1.0 \
-                        if settings['changing_multiplier'] == 'Нет' \
+                        if investor['changing_multiplier'] == 'Нет' \
                         else get_deals_volume(investor, lieder_volume=pos_lid.volume,
                                               lieder_balance_value=lieder_balance
-                                              if settings['multiplier'] == 'Баланс' else lieder_equity)
+                                              if investor['multiplier'] == 'Баланс' else lieder_equity)
                     response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
                                              sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
                     rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
@@ -787,12 +1039,12 @@ async def execute_investor(investor):
                         print('----------------- TRY VOLUME', volume)
                     msg = send_retcodes[response.retcode][1]
                     set_comment(msg + msg_ext + ' : ' + str(response.retcode))
-                    print(msg + msg_ext + ' : ' + response.retcode)
+                    print(msg + msg_ext + ' : ' + str(response.retcode))
                 else:
                     set_comment('Не выполнено условие +/-')
     else:
         print('ACCESS DISABLED')
-    if scs_access or settings['accompany_transactions'] == 'Да':
+    if investor['dcs_access'] or investor['accompany_transactions'] == 'Да':
         close_positions_by_lieder(positions_lieder=lieder_positions, positions_investor=Mt.positions_get())
     if len(output_report) > 0:
         print('    ', output_report)
@@ -802,13 +1054,16 @@ async def execute_investor(investor):
 async def task_manager():
     while True:
         await trading_event.wait()
-        for _ in investors_list:
+        for _ in source['investors']:
             event_loop.create_task(execute_investor(_))
         trading_event.clear()
 
 
 if __name__ == '__main__':
+    print(f'\nСКС запущена [{start_date}]. Обновление Лидера {sleep_lieder_update}с.')
+    set_dummy_data()
     event_loop = asyncio.new_event_loop()
-    event_loop.create_task(execute_lieder(sleep_size=5))
+    # event_loop.create_task(update_setup())
+    event_loop.create_task(execute_lieder())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
