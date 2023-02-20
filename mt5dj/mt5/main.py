@@ -234,12 +234,10 @@ def set_dummy_data():
             # -----------------------------------------
         }
     ]
-
     source['investors'].append(source['investors'][0].copy())
     source['investors'][1]['terminal_path'] = r'C:\Program Files\MetaTrader 5_3\terminal64.exe'
     source['investors'][1]['login'] = 5009600048
     source['investors'][1]['password'] = 'sbbsapv5'
-
     source['settings'] = {
         "relevance": True,
         "update_at": str(start_date),
@@ -249,6 +247,7 @@ def set_dummy_data():
 
 
 def disable_copy(investors_list, investor):
+    investor['dcs_access'] = False
     if send_messages:
         return
     investor_id = -1
@@ -259,7 +258,6 @@ def disable_copy(investors_list, investor):
     if investor_id < 0:
         return
     id_shift = '_' + str(investor_id)
-    investor['dcs_access'] = False
     url = host + 'list'
     response = requests.get(url).json()
     numb = response[-1]['id']
@@ -590,6 +588,11 @@ def is_position_exist_in_history(lieder_position):
 def get_positions_profit():
     """Расчет прибыли текущих позиций"""
     active_positions = Mt.positions_get()
+
+    # print('>>> ACTV: ')
+    # for _ in active_positions:
+    #     print(active_positions.index(_), datetime.fromtimestamp(_.time), _.profit)
+
     result = 0
     own_positions = []
     try:
@@ -613,6 +616,11 @@ def get_history_profit():
     date_to = datetime.now().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA
 
     history_deals = Mt.history_deals_get(date_from, date_to)
+
+    # print('>>> HIST: ', date_from, ' - ', date_to)
+    # for _ in history_deals:
+    #     print(history_deals.index(_), datetime.fromtimestamp(_.time), _.profit)
+
     result = 0
     own_positions = []
     try:
@@ -646,7 +654,10 @@ def check_stop_limits(investor):
         return
     close_positions = False
     total_profit = history_profit + current_profit
-    print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date,
+
+    # print(f'total_profit = history_profit + current_profit  ->  {total_profit} = {history_profit} + {current_profit}')
+
+    print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date - UTC_OFFSET_TIMEDELTA,
           ':', round(total_profit, 2), 'USD')
     # CHECK LOST SIZE FOR CLOSE ALL
     if total_profit < 0:
@@ -1152,10 +1163,10 @@ async def task_manager():
 
 
 if __name__ == '__main__':
-    print(f'\nСКС запущена [{start_date}]. Обновление Лидера {sleep_lieder_update}с.')
-    # set_dummy_data()  # для теста без сервера раскомментировать
+    print(f'\nСКС запущена [{start_date}]. Обновление Лидера {sleep_lieder_update} с.')
+    set_dummy_data()  # для теста без сервера раскомментировать
     event_loop = asyncio.new_event_loop()
-    event_loop.create_task(update_setup())  # для теста без сервера закомментировать
+    # event_loop.create_task(update_setup())  # для теста без сервера закомментировать
     event_loop.create_task(update_lieder_info())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
