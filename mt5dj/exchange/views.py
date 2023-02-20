@@ -13,7 +13,7 @@ from .serializer import QuotesSerializer
 def index(request):
     if request.method == 'GET':
         try:
-            url = 'http://localhost:8000/api/demo_mt5/list'
+            url = 'http://my.atimex.io:8000/api/demo_mt5/list'
             response = requests.get(url).json()[0]
             api_key_expired = response.get('api_key_expired')
             no_exchange_connection = response.get('no_exchange_connection')
@@ -30,7 +30,7 @@ def index(request):
                 commentary = 'на редкость все хорошо'
                 payload = json.dumps({"commentary": commentary})
             headers = {'Content-Type': 'application/json'}
-            patch_url = 'http://127.0.0.1:8000/api/demo_mt5/update/1/'
+            patch_url = 'http://my.atimex.io:8000/api/demo_mt5/update/1/'
             requests.request("PATCH", patch_url, headers=headers, data=payload)
             return HttpResponse("SUCCESSFUL PATCH")
         except Exception as e:
