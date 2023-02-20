@@ -1,10 +1,11 @@
 import asyncio
 import aiohttp
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from math import fabs
 import MetaTrader5 as Mt
-# from win32gui import PostMessage, GetAncestor, FindWindow
 import requests
+
+# from win32gui import PostMessage, GetAncestor, FindWindow
 
 send_retcodes = {
     10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
@@ -247,15 +248,24 @@ def set_dummy_data():
     }
 
 
-def disable_copy(investor):
+def disable_copy(investors_list, investor):
     if send_messages:
         return
+    investor_id = -1
+    for _ in investors_list:
+        if _['login'] == investor['login']:
+            investor_id = investors_list.index(_)
+            break
+    if investor_id < 0:
+        return
+    id_shift = '_' + str(investor_id)
     investor['dcs_access'] = False
     url = host + 'list'
     response = requests.get(url).json()
     numb = response[-1]['id']
     url = host + f'patch/{numb}/'
-    requests.patch(url=url, data={"access": False})
+    name = "access" + id_shift
+    requests.patch(url=url, data={name: False})
 
 
 def set_comment(comment):
@@ -272,17 +282,17 @@ def set_comment(comment):
 def execute_conditions(investor):
     if investor['blacklist'] == 'Да':  # если в блек листе
         force_close_all_positions(investor, reason='Блеклист')
-        disable_copy(investor)
+        disable_copy(Mt.positions_get(), investor)
     if investor['disconnect'] == 'Да':  # если отключиться
         if get_investors_positions_count(investor) == 0:  # если нет открыты сделок
-            disable_copy(investor)
+            disable_copy(Mt.positions_get(), investor)
 
         if investor['open_trades_disconnect'] == 'Закрыть':  # если сделки закрыть
             force_close_all_positions(investor, 'Закрыто по команде пользователя')
-            disable_copy(investor)
+            disable_copy(Mt.positions_get(), investor)
 
         elif investor['accompany_transactions'] == 'Нет':  # если сделки оставить и не сопровождать
-            disable_copy(investor)
+            disable_copy(Mt.positions_get(), investor)
 
 
 # def check_income_data(json_response):
@@ -656,7 +666,7 @@ def check_stop_limits(investor):
                 if act_pos.magic == MAGIC:
                     close_position(act_pos, 'Закрытие позиции по условию стоп-лосс')
             if investor['open_trades'] == 'Закрыть и отключить':
-                disable_copy(investor)
+                disable_copy(Mt.positions_get(), investor)
 
 
 def check_transaction(investor, lieder_position):
@@ -695,7 +705,7 @@ def check_transaction(investor, lieder_position):
     return True if res is not None and transaction_plus >= res >= transaction_minus else False  # Проверка на заданные отклонения
 
 
-def get_deals_volume(investor, lieder_volume, lieder_balance_value):
+def get_deal_volume(investor, lieder_volume, lieder_balance_value):
     """Расчет множителя"""
     multiplier = investor['multiplier_value']
     get_for_balance = True if investor['multiplier'] == 'Баланс' else False
@@ -711,22 +721,26 @@ def get_deals_volume(investor, lieder_volume, lieder_balance_value):
 
 def open_position(symbol, deal_type, lot, sender_ticket: int, tp=0, sl=0):
     """Открытие позиции"""
-    point = Mt.symbol_info(symbol).point
-    price = tp_in = sl_in = 0.0
-    if deal_type == 0:  # BUY
-        deal_type = Mt.ORDER_TYPE_BUY
-        price = Mt.symbol_info_tick(symbol).ask
+    try:
+        point = Mt.symbol_info(symbol).point
+        price = tp_in = sl_in = 0.0
+        if deal_type == 0:  # BUY
+            deal_type = Mt.ORDER_TYPE_BUY
+            price = Mt.symbol_info_tick(symbol).ask
         if tp != 0:
             tp_in = price + tp * point
         if sl != 0:
             sl_in = price - sl * point
-    elif deal_type == 1:  # SELL
-        deal_type = Mt.ORDER_TYPE_SELL
-        price = Mt.symbol_info_tick(symbol).bid
-        if tp != 0:
-            tp_in = price - tp * point
-        if sl != 0:
-            sl_in = price + sl * point
+        elif deal_type == 1:  # SELL
+            deal_type = Mt.ORDER_TYPE_SELL
+            price = Mt.symbol_info_tick(symbol).bid
+            if tp != 0:
+                tp_in = price - tp * point
+            if sl != 0:
+                sl_in = price + sl * point
+    except Exception as ex:
+        print('open_position:', ex)
+        return {}
     comment = DealComment()
     comment.lieder_ticket = sender_ticket
     comment.reason = 'Открыто_СКС'
@@ -825,7 +839,7 @@ async def source_setup():
                 'password': response['investor_one_password'],
                 'server': response['investor_one_server'],
                 'investment_size': float(response['investment_one_size']),
-                'dcs_access': response['access'],
+                'dcs_access': response['access_1'],
 
                 "deal_in_plus": float(response['deal_in_plus']),
                 "deal_in_minus": float(response['deal_in_minus']),
@@ -870,7 +884,7 @@ async def source_setup():
                 'password': response['investor_two_password'],
                 'server': response['investor_two_server'],
                 'investment_size': float(response['investment_two_size']),
-                'dcs_access': response['access'],
+                'dcs_access': response['access_2'],
 
                 "deal_in_plus": float(response['deal_in_plus']),
                 "deal_in_minus": float(response['deal_in_minus']),
@@ -1082,7 +1096,7 @@ async def execute_investor(investor):
     global output_report
     output_report = []
     investor_positions = Mt.positions_get()
-    print(f' - {investor["login"]} - {len(investor_positions)} positions')
+    print(f' - {investor["login"]} - {len(investor_positions)} positions. Access:', investor['dcs_access'])
     if investor['dcs_access']:
         execute_conditions(investor=investor)  # проверка условий кейса закрытия
         for pos_lid in lieder_positions:
@@ -1094,20 +1108,23 @@ async def execute_investor(investor):
                 if check_transaction(investor=investor, lieder_position=pos_lid):
                     volume = 1.0 \
                         if investor['changing_multiplier'] == 'Нет' \
-                        else get_deals_volume(investor, lieder_volume=pos_lid.volume,
-                                              lieder_balance_value=lieder_balance
-                                              if investor['multiplier'] == 'Баланс' else lieder_equity)
+                        else get_deal_volume(investor, lieder_volume=pos_lid.volume,
+                                             lieder_balance_value=lieder_balance
+                                             if investor['multiplier'] == 'Баланс' else lieder_equity)
                     response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
                                              sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
-                    rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
-                    output_report.append(rpt)
-                    msg_ext = ''
-                    if response.retcode == 10014:
-                        msg_ext = ' [volume: ' + str(volume) + ']'
-                        print('----------------- TRY VOLUME', volume)
-                    msg = send_retcodes[response.retcode][1]
-                    set_comment(msg + msg_ext + ' : ' + str(response.retcode))
-                    print(msg + msg_ext + ' : ' + str(response.retcode))
+                    try:
+                        rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
+                        output_report.append(rpt)
+                        msg_ext = ''
+                        if response.retcode == 10014:
+                            msg_ext = ' [volume: ' + str(volume) + ']'
+                            print('----------------- TRY VOLUME', volume)
+                            msg = send_retcodes[response.retcode][1]
+                            set_comment(msg + msg_ext + ' : ' + str(response.retcode))
+                            print(msg + msg_ext + ' : ' + str(response.retcode))
+                    except Exception as e:
+                        print(e)
                 else:
                     set_comment('Не выполнено условие +/-')
         check_stop_limits(investor=investor)  # проверка условий стоп-лосс
@@ -1138,7 +1155,7 @@ if __name__ == '__main__':
     print(f'\nСКС запущена [{start_date}]. Обновление Лидера {sleep_lieder_update}с.')
     # set_dummy_data()  # для теста без сервера раскомментировать
     event_loop = asyncio.new_event_loop()
-    event_loop.create_task(update_setup())    # для теста без сервера закомментировать
+    event_loop.create_task(update_setup())  # для теста без сервера закомментировать
     event_loop.create_task(update_lieder_info())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
