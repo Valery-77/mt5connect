@@ -8,6 +8,7 @@ import requests
 # from win32gui import PostMessage, GetAncestor, FindWindow
 
 send_retcodes = {
+    -100: ('CUSTOM_RETCODE_NOT_ENOUGH_MARGIN', 'Нехватка маржи. Выбран режим - Не открывать сделку'),
     10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
     10006: ('TRADE_RETCODE_REJECT', 'Запрос отклонен'),
     10007: ('TRADE_RETCODE_CANCEL', 'Запрос отменен трейдером'),
@@ -730,7 +731,7 @@ def get_deal_volume(investor, lieder_volume, lieder_balance_value):
     return result
 
 
-def open_position(symbol, deal_type, lot, sender_ticket: int, tp=0, sl=0):
+def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0, sl=0):
     """Открытие позиции"""
     try:
         point = Mt.symbol_info(symbol).point
@@ -769,8 +770,31 @@ def open_position(symbol, deal_type, lot, sender_ticket: int, tp=0, sl=0):
         "type_time": Mt.ORDER_TIME_GTC,
         "type_filling": Mt.ORDER_FILLING_RETURN,
     }
-    result = Mt.order_send(request)
-    return result
+    checked_request = edit_volume(investor, request)  # Проверка и расчет объема при недостатке маржи
+    if checked_request:
+        result = Mt.order_send(checked_request)
+        return result
+    else:
+        return {'retcode': -100}
+
+
+def edit_volume(investor, request):
+    """Расчет объема при недостатке маржи"""
+    response = Mt.order_check(request)
+    # print(response)
+    if response.retcode == 10019:  # Нет достаточных денежных средств для выполнения запроса
+        if source['investors']['not_enough_margin'] == 'Минимальный объем':
+            request.volume = 0.01
+        elif source['investors']['not_enough_margin'] == 'Достаточный объем':
+            symbol = request['symbol']
+            contract_specification = Mt.symbol_info(symbol).contract_size
+            price = Mt.symbol_info_tick(symbol).bid
+            lot_price = contract_specification * price
+            balance = investor['investment_size'] + get_history_profit() + get_positions_profit()
+            request.volume = round(balance / lot_price, 2)
+        elif source['investors']['not_enough_margin'] == 'Не открывать':
+            request = None
+    return request
 
 
 def close_position(position, reason):
@@ -1127,7 +1151,7 @@ async def execute_investor(investor):
                     try:
                         rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
                         output_report.append(rpt)
-                        msg_ext = ''
+                        # msg_ext = ''
                         if response.retcode == 10014:
                             msg_ext = ' [volume: ' + str(volume) + ']'
                             print('----------------- TRY VOLUME', volume)
@@ -1157,16 +1181,17 @@ async def execute_investor(investor):
 async def task_manager():
     while True:
         await trading_event.wait()
-        for _ in source['investors']:
-            event_loop.create_task(execute_investor(_))
+        if len(source) > 0:
+            for _ in source['investors']:
+                event_loop.create_task(execute_investor(_))
         trading_event.clear()
 
 
 if __name__ == '__main__':
     print(f'\nСКС запущена [{start_date}]. Обновление Лидера {sleep_lieder_update} с.')
-    set_dummy_data()  # для теста без сервера раскомментировать
+    # set_dummy_data()  # для теста без сервера раскомментировать
     event_loop = asyncio.new_event_loop()
-    # event_loop.create_task(update_setup())  # для теста без сервера закомментировать
+    event_loop.create_task(update_setup())  # для теста без сервера закомментировать
     event_loop.create_task(update_lieder_info())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
