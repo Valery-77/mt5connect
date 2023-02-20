@@ -40,7 +40,6 @@ INSTALLED_APPS = [
     'rest_framework',
     'django_mt',
     'mt5',
-    'exchange.apps.ExchangeConfig'
 ]
 
 MIDDLEWARE = [

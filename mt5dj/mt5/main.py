@@ -1090,6 +1090,31 @@ async def patching_quotes():
             print("Exception in patching_quotes:", e)
 
 
+async def patching_connection_exchange():
+    try:
+        url = 'http://my.atimex.io:8000/api/demo_mt5/list'
+        response = requests.get(url).json()[0]
+        api_key_expired = response.get('api_key_expired')
+        no_exchange_connection = response.get('no_exchange_connection')
+        if api_key_expired == "true":
+            commentary = 'Ключ APi истек'
+            payload = json.dumps({"commentary": commentary})
+        elif no_exchange_connection == 'true':
+            commentary = 'Нет связи с биржей'
+            payload = json.dumps({"commentary": commentary})
+        elif api_key_expired == "true" and no_exchange_connection == 'true':
+            commentary = 'Нет связи с биржей и ключ APi истек'
+            payload = json.dumps({"commentary": commentary})
+        else:
+            commentary = 'на редкость все хорошо'
+            payload = json.dumps({"commentary": commentary})
+        headers = {'Content-Type': 'application/json'}
+        patch_url = 'http://my.atimex.io:8000/api/demo_mt5/update/1/'
+        requests.request("PATCH", patch_url, headers=headers, data=payload)
+    except Exception as e:
+        print("Exception in patching_connection_exchange:", e)
+
+
 async def update_setup():
     while True:
         await source_setup()
@@ -1212,6 +1237,7 @@ async def task_manager():
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
         # await correcting_lots()
+        await patching_connection_exchange()
         if current_time == "10:00:00":
             await patching_quotes()
         trading_event.clear()

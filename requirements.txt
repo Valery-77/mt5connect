@@ -1,4 +1,4 @@
-Django~=4.1.6
+Django==4.1.7
 MetaTrader5~=5.0.43
 # win32gui~=221.6
 djangorestframework~=3.14.0
