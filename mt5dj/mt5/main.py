@@ -1092,21 +1092,21 @@ async def patching_quotes():
 
 async def patching_connection_exchange():
     try:
-        url = 'http://my.atimex.io:8000/api/demo_mt5/list'
+        url = 'https://my.atimex.io:8000/api/demo_mt5/last'
         response = requests.get(url).json()[0]
         api_key_expired = response.get('api_key_expired')
         no_exchange_connection = response.get('no_exchange_connection')
-        if api_key_expired == "true":
-            commentary = 'Ключ APi истек'
-            payload = json.dumps({"commentary": commentary})
-        elif no_exchange_connection == 'true':
-            commentary = 'Нет связи с биржей'
-            payload = json.dumps({"commentary": commentary})
-        elif api_key_expired == "true" and no_exchange_connection == 'true':
+        if api_key_expired == "Да" and no_exchange_connection == 'Да':
             commentary = 'Нет связи с биржей и ключ APi истек'
             payload = json.dumps({"commentary": commentary})
+        elif api_key_expired == "Да":
+            commentary = 'Ключ APi истек'
+            payload = json.dumps({"commentary": commentary})
+        elif no_exchange_connection == 'Да':
+            commentary = 'Нет связи с биржей'
+            payload = json.dumps({"commentary": commentary})
         else:
-            commentary = 'на редкость все хорошо'
+            commentary = ''
             payload = json.dumps({"commentary": commentary})
         headers = {'Content-Type': 'application/json'}
         patch_url = 'http://my.atimex.io:8000/api/demo_mt5/update/1/'
