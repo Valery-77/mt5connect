@@ -1153,38 +1153,38 @@ async def execute_investor(investor):
     Mt.shutdown()
 
 
-async def correcting_lots():
-    try:
-        response_source = dict(requests.get(host).json()[0])
-        if "Корректировать объем" in (response_source.get("recovery_model"), response_source.get("buy_hold_model")):
-            # investors_balance = [x.get("investment_size") for x in investors_list]
-            investors_balance = [investors_list[0].get("investment_size"),
-                                 investors_list[1].get("investment_size")]
-            global old_investors_balance
-            if not old_investors_balance:
-                old_investors_balance = investors_balance
-            if investors_balance != old_investors_balance:
-                lots_qoef = [x / y for x, y in zip(investors_balance, old_investors_balance)]
-                for i, lot in enumerate(lots_qoef):
-                    if lot != 1.0:
-                        for pos_lid in lieder_positions:
-                            inv_tp = get_pips_tp(pos_lid)
-                            inv_sl = get_pips_sl(pos_lid)
-                            for investor in investors_list:
-                                volume = get_deals_volume(investor, lieder_volume=pos_lid.volume,
-                                                          lieder_balance_value=lieder_balance
-                                                          if settings['multiplier'] == 'Баланс' else lieder_equity)
-                                response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
-                                                         sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
-                                rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
-                                output_report.append(rpt)
-
-                                if response.retcode == 10014:
-                                    print('-----------------VOLUME', volume)
-                old_investors_balance = investors_balance
-
-    except Exception as e:
-        print("Exception in correcting_lots:", e)
+# async def correcting_lots():
+#     try:
+#         response_source = dict(requests.get(host).json()[0])
+#         if "Корректировать объем" in (response_source.get("recovery_model"), response_source.get("buy_hold_model")):
+#             # investors_balance = [x.get("investment_size") for x in investors_list]
+#             investors_balance = [investors_list[0].get("investment_size"),
+#                                  investors_list[1].get("investment_size")]
+#             global old_investors_balance
+#             if not old_investors_balance:
+#                 old_investors_balance = investors_balance
+#             if investors_balance != old_investors_balance:
+#                 lots_qoef = [x / y for x, y in zip(investors_balance, old_investors_balance)]
+#                 for i, lot in enumerate(lots_qoef):
+#                     if lot != 1.0:
+#                         for pos_lid in lieder_positions:
+#                             inv_tp = get_pips_tp(pos_lid)
+#                             inv_sl = get_pips_sl(pos_lid)
+#                             for investor in investors_list:
+#                                 volume = get_deals_volume(investor, lieder_volume=pos_lid.volume,
+#                                                           lieder_balance_value=lieder_balance
+#                                                           if settings['multiplier'] == 'Баланс' else lieder_equity)
+#                                 response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
+#                                                          sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+#                                 rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
+#                                 output_report.append(rpt)
+#
+#                                 if response.retcode == 10014:
+#                                     print('-----------------VOLUME', volume)
+#                 old_investors_balance = investors_balance
+#
+#     except Exception as e:
+#         print("Exception in correcting_lots:", e)
 
 
 async def task_manager():
