@@ -259,7 +259,7 @@ def is_disconnect_changed(investor):
     return False
 
 
-def disable_copy(investors_list, investor):
+def disable_dcs(investors_list, investor):
     investor['dcs_access'] = False
     if send_messages:
         return
@@ -296,18 +296,17 @@ def execute_conditions(investor):
 
     if investor['blacklist'] == 'Да':  # если в блек листе
         force_close_all_positions(investor, reason='Блеклист')
-        disable_copy(Mt.positions_get(), investor)
+        disable_dcs(source['investors'], investor)
     if investor['disconnect'] == 'Да':  # если отключиться
         if get_investors_positions_count(investor) == 0:  # если нет открыты сделок
-            disable_copy(Mt.positions_get(), investor)
+            disable_dcs(source['investors'], investor)
 
         if investor['open_trades_disconnect'] == 'Закрыть':  # если сделки закрыть
             force_close_all_positions(investor, 'Закрыто по команде пользователя')
-            disable_copy(Mt.positions_get(), investor)
+            disable_dcs(source['investors'], investor)
 
         elif investor['accompany_transactions'] == 'Нет':  # если сделки оставить и не сопровождать
-            disable_copy(Mt.positions_get(), investor)
-
+            disable_dcs(source['investors'], investor)
 
 
 def init_mt(init_data, need_login=False):
@@ -475,7 +474,7 @@ def check_stop_limits(investor):
                 if act_pos.magic == MAGIC:
                     close_position(act_pos, 'Закрытие позиции по условию стоп-лосс')
             if investor['open_trades'] == 'Закрыть и отключить':
-                disable_copy(Mt.positions_get(), investor)
+                disable_dcs(source['investors'], investor)
 
 
 def check_transaction(investor, lieder_position):
@@ -582,7 +581,7 @@ def edit_volume(investor, request):
     """Расчет объема при недостатке маржи"""
     response = Mt.order_check(request)
     # print(response)
-    if response.retcode == 10014:
+    if response.retcode == 10014:  # Неправильный объем
         max_vol = Mt.symbol_info(request['symbol']).volume_max
         if request['volume'] > max_vol:
             set_comment('Объем сделки больше максимального')
@@ -657,11 +656,6 @@ def close_positions_by_lieder(positions_lieder, positions_investor):
     for pos in non_existed_positions:
         print('     close position:', pos.comment)
         close_position(pos, reason='Закрыто инвестором')
-
-
-def check_notification():
-    if source['notification'] == 'Да':
-        set_comment('Вы должны оплатить вознаграждение')
 
 
 def check_notification():
@@ -793,7 +787,7 @@ async def source_setup():
         }
         prev_date = main_source['settings']['created_at'].split('.')
         start_date = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S")
-    source = main_source
+    source = main_source.copy()
 
 
 async def patching_quotes():
@@ -873,6 +867,17 @@ async def update_lieder_info(sleep=sleep_lieder_update):
         await asyncio.sleep(sleep)
 
 
+def is_position_opened(lieder_position, investor):
+    """Проверка позиции лидера на наличие в списке позиций инвестора"""
+    if is_position_exist_in_list(lieder_position=lieder_position, investor_positions=Mt.positions_get()):
+        return True
+    if is_position_exist_in_history(lieder_position=lieder_position):
+        if investor['closed_deals_myself'] == 'Переоткрывать':
+            return False
+        return True
+    return False
+
+
 async def execute_investor(investor):
     init_res = init_mt(init_data=investor)
     if not init_res:
@@ -888,8 +893,7 @@ async def execute_investor(investor):
         for pos_lid in lieder_positions:
             inv_tp = get_pips_tp(pos_lid)
             inv_sl = get_pips_sl(pos_lid)
-            if not is_position_exist_in_list(lieder_position=pos_lid, investor_positions=Mt.positions_get()) and \
-                    not is_position_exist_in_history(lieder_position=pos_lid):
+            if not is_position_opened(pos_lid, investor):
                 if check_transaction(investor=investor, lieder_position=pos_lid):
                     volume = 1.0 \
                         if investor['changing_multiplier'] == 'Нет' \
@@ -904,7 +908,7 @@ async def execute_investor(investor):
                     except AttributeError:
                         msg = str(investor['login']) + ' ' + send_retcodes[response['retcode']][1] + ' : ' + str(
                             response['retcode'])
-                    if response['retcode'] != 10009:
+                    if response.retcode != 10009:  # Заявка выполнена
                         set_comment(msg)
                     print(msg)
                 else:
