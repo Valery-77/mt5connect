@@ -717,17 +717,18 @@ def check_transaction(investor, lieder_position):
     return True if res is not None and transaction_plus >= res >= transaction_minus else False  # Проверка на заданные отклонения
 
 
-def get_deal_volume(investor, lieder_volume, lieder_balance_value):
+def get_deal_volume(investor, symbol, lieder_volume, lieder_balance_value):
     """Расчет множителя"""
     multiplier = investor['multiplier_value']
-    get_for_balance = True if investor['multiplier'] == 'Баланс' else False
     investment_size = investor['investment_size']
-    # ext_k = 1.0
+    get_for_balance = True if investor['multiplier'] == 'Баланс' else False
     if get_for_balance:
         ext_k = (investment_size + get_history_profit()) / lieder_balance_value
     else:
         ext_k = (investment_size + get_history_profit() + get_positions_profit()) / lieder_balance_value
-    result = round(lieder_volume * multiplier * ext_k, 2)
+    min_lot = Mt.symbol_info(symbol).volume_min
+    decimals = str(min_lot)[::-1].find('.')
+    result = round(lieder_volume * multiplier * ext_k, decimals)
     return result
 
 
@@ -784,14 +785,16 @@ def edit_volume(investor, request):
     # print(response)
     if response.retcode == 10019:  # Нет достаточных денежных средств для выполнения запроса
         if source['investors']['not_enough_margin'] == 'Минимальный объем':
-            request.volume = 0.01
+            request['volume'] = Mt.symbol_info(request['symbol']).volume_min
         elif source['investors']['not_enough_margin'] == 'Достаточный объем':
             symbol = request['symbol']
             contract_specification = Mt.symbol_info(symbol).contract_size
             price = Mt.symbol_info_tick(symbol).bid
             lot_price = contract_specification * price
             balance = investor['investment_size'] + get_history_profit() + get_positions_profit()
-            request.volume = round(balance / lot_price, 2)
+            min_lot = Mt.symbol_info(request.symbol).volume_min
+            decimals = str(min_lot)[::-1].find('.')
+            request['volume'] = round(balance / lot_price, decimals)
         elif source['investors']['not_enough_margin'] == 'Не открывать':
             request = None
     return request
@@ -856,9 +859,13 @@ async def source_setup():
     global start_date, source
     main_source = {}
     url = host + 'last'
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as get_response:
-            response = await get_response.json()  # .text()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as get_response:
+                response = await get_response.json()  # .text()
+    except Exception as e:
+        print(e)
+        response = []
     if len(response) > 0:
         response = response[0]
         main_source['lieder'] = {
@@ -1115,7 +1122,7 @@ async def update_lieder_info(sleep=sleep_lieder_update):
             lieder_balance = Mt.account_info().balance
             lieder_equity = Mt.account_info().equity
             lieder_positions = Mt.positions_get()
-            Mt.shutdown()
+            # Mt.shutdown()
             print(f'\nLIEDER {source["lieder"]["login"]} - {len(lieder_positions)} positions :',
                   datetime.utcnow().replace(microsecond=0), ' dUTC:', UTC_OFFSET_TIMEDELTA)
             trading_event.set()
@@ -1137,29 +1144,19 @@ async def execute_investor(investor):
         for pos_lid in lieder_positions:
             inv_tp = get_pips_tp(pos_lid)
             inv_sl = get_pips_sl(pos_lid)
-
             if not is_position_exist_in_list(lieder_position=pos_lid, investor_positions=investor_positions) and \
                     not is_position_exist_in_history(lieder_position=pos_lid):
                 if check_transaction(investor=investor, lieder_position=pos_lid):
                     volume = 1.0 \
                         if investor['changing_multiplier'] == 'Нет' \
-                        else get_deal_volume(investor, lieder_volume=pos_lid.volume,
+                        else get_deal_volume(investor, symbol=pos_lid.symbol, lieder_volume=pos_lid.volume,
                                              lieder_balance_value=lieder_balance
                                              if investor['multiplier'] == 'Баланс' else lieder_equity)
-                    response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
-                                             sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
-                    try:
-                        rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
-                        output_report.append(rpt)
-                        # msg_ext = ''
-                        if response.retcode == 10014:
-                            msg_ext = ' [volume: ' + str(volume) + ']'
-                            print('----------------- TRY VOLUME', volume)
-                            msg = send_retcodes[response.retcode][1]
-                            set_comment(msg + msg_ext + ' : ' + str(response.retcode))
-                            print(msg + msg_ext + ' : ' + str(response.retcode))
-                    except Exception as e:
-                        print(e)
+                    response = open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
+                                             lot=volume, sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+                    msg = str(investor['login']) + ' ' + send_retcodes[response.retcode][1]
+                    set_comment(msg + ' : ' + str(response.retcode))
+                    print(msg + ' : ' + str(response.retcode))
                 else:
                     set_comment('Не выполнено условие +/-')
         check_stop_limits(investor=investor)  # проверка условий стоп-лосс
@@ -1175,7 +1172,7 @@ async def execute_investor(investor):
 
     if len(output_report) > 0:
         print('    ', output_report)
-    Mt.shutdown()
+    # Mt.shutdown()
 
 
 async def task_manager():
@@ -1195,3 +1192,4 @@ if __name__ == '__main__':
     event_loop.create_task(update_lieder_info())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
+    Mt.shutdown()
