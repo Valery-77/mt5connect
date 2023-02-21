@@ -10,6 +10,8 @@ from django.core.serializers.json import DjangoJSONEncoder
 # from win32gui import PostMessage, GetAncestor, FindWindow
 
 send_retcodes = {
+    -200: ('CUSTOM_RETCODE_WRONG_SYMBOL', 'Нет такого торгового символа'),
+    -100: ('CUSTOM_RETCODE_NOT_ENOUGH_MARGIN', 'Нехватка маржи. Выбран режим - Не открывать сделку'),
     10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
     10006: ('TRADE_RETCODE_REJECT', 'Запрос отклонен'),
     10007: ('TRADE_RETCODE_CANCEL', 'Запрос отменен трейдером'),
@@ -236,12 +238,10 @@ def set_dummy_data():
             # -----------------------------------------
         }
     ]
-
     source['investors'].append(source['investors'][0].copy())
     source['investors'][1]['terminal_path'] = r'C:\Program Files\MetaTrader 5_3\terminal64.exe'
     source['investors'][1]['login'] = 5009600048
     source['investors'][1]['password'] = 'sbbsapv5'
-
     source['settings'] = {
         "relevance": True,
         "update_at": str(start_date),
@@ -251,6 +251,7 @@ def set_dummy_data():
 
 
 def disable_copy(investors_list, investor):
+    investor['dcs_access'] = False
     if send_messages:
         return
     investor_id = -1
@@ -261,7 +262,6 @@ def disable_copy(investors_list, investor):
     if investor_id < 0:
         return
     id_shift = '_' + str(investor_id)
-    investor['dcs_access'] = False
     url = host + 'list'
     response = requests.get(url).json()
     numb = response[-1]['id']
@@ -592,6 +592,11 @@ def is_position_exist_in_history(lieder_position):
 def get_positions_profit():
     """Расчет прибыли текущих позиций"""
     active_positions = Mt.positions_get()
+
+    # print('>>> ACTV: ')
+    # for _ in active_positions:
+    #     print(active_positions.index(_), datetime.fromtimestamp(_.time), _.profit)
+
     result = 0
     own_positions = []
     try:
@@ -615,6 +620,11 @@ def get_history_profit():
     date_to = datetime.now().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA
 
     history_deals = Mt.history_deals_get(date_from, date_to)
+
+    # print('>>> HIST: ', date_from, ' - ', date_to)
+    # for _ in history_deals:
+    #     print(history_deals.index(_), datetime.fromtimestamp(_.time), _.profit)
+
     result = 0
     own_positions = []
     try:
@@ -648,7 +658,10 @@ def check_stop_limits(investor):
         return
     close_positions = False
     total_profit = history_profit + current_profit
-    print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date,
+
+    # print(f'total_profit = history_profit + current_profit  ->  {total_profit} = {history_profit} + {current_profit}')
+
+    print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date - UTC_OFFSET_TIMEDELTA,
           ':', round(total_profit, 2), 'USD')
     # CHECK LOST SIZE FOR CLOSE ALL
     if total_profit < 0:
@@ -707,21 +720,25 @@ def check_transaction(investor, lieder_position):
     return True if res is not None and transaction_plus >= res >= transaction_minus else False  # Проверка на заданные отклонения
 
 
-def get_deal_volume(investor, lieder_volume, lieder_balance_value):
+def get_deal_volume(investor, symbol, lieder_volume, lieder_balance_value):
     """Расчет множителя"""
     multiplier = investor['multiplier_value']
-    get_for_balance = True if investor['multiplier'] == 'Баланс' else False
     investment_size = investor['investment_size']
-    # ext_k = 1.0
+    get_for_balance = True if investor['multiplier'] == 'Баланс' else False
     if get_for_balance:
         ext_k = (investment_size + get_history_profit()) / lieder_balance_value
     else:
         ext_k = (investment_size + get_history_profit() + get_positions_profit()) / lieder_balance_value
-    result = round(lieder_volume * multiplier * ext_k, 2)
+    try:
+        min_lot = Mt.symbol_info(symbol).volume_min
+        decimals = str(min_lot)[::-1].find('.')
+    except AttributeError:
+        decimals = 2
+    result = round(lieder_volume * multiplier * ext_k, decimals)
     return result
 
 
-def open_position(symbol, deal_type, lot, sender_ticket: int, tp=0, sl=0):
+def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0, sl=0):
     """Открытие позиции"""
     try:
         point = Mt.symbol_info(symbol).point
@@ -740,9 +757,8 @@ def open_position(symbol, deal_type, lot, sender_ticket: int, tp=0, sl=0):
                 tp_in = price - tp * point
             if sl != 0:
                 sl_in = price + sl * point
-    except Exception as ex:
-        print('open_position:', ex)
-        return {}
+    except AttributeError:
+        return {'retcode': -200}
     comment = DealComment()
     comment.lieder_ticket = sender_ticket
     comment.reason = 'Открыто_СКС'
@@ -760,8 +776,33 @@ def open_position(symbol, deal_type, lot, sender_ticket: int, tp=0, sl=0):
         "type_time": Mt.ORDER_TIME_GTC,
         "type_filling": Mt.ORDER_FILLING_RETURN,
     }
-    result = Mt.order_send(request)
-    return result
+    checked_request = edit_volume(investor, request)  # Проверка и расчет объема при недостатке маржи
+    if checked_request:
+        result = Mt.order_send(checked_request)
+        return result
+    else:
+        return {'retcode': -100}
+
+
+def edit_volume(investor, request):
+    """Расчет объема при недостатке маржи"""
+    response = Mt.order_check(request)
+    # print(response)
+    if response.retcode == 10019:  # Нет достаточных денежных средств для выполнения запроса
+        if source['investors']['not_enough_margin'] == 'Минимальный объем':
+            request['volume'] = Mt.symbol_info(request['symbol']).volume_min
+        elif source['investors']['not_enough_margin'] == 'Достаточный объем':
+            symbol = request['symbol']
+            contract_specification = Mt.symbol_info(symbol).contract_size
+            price = Mt.symbol_info_tick(symbol).bid
+            lot_price = contract_specification * price
+            balance = investor['investment_size'] + get_history_profit() + get_positions_profit()
+            min_lot = Mt.symbol_info(request.symbol).volume_min
+            decimals = str(min_lot)[::-1].find('.')
+            request['volume'] = round(balance / lot_price, decimals)
+        elif source['investors']['not_enough_margin'] == 'Не открывать':
+            request = None
+    return request
 
 
 def close_position(position, reason):
@@ -823,9 +864,13 @@ async def source_setup():
     global start_date, source
     main_source = {}
     url = host + 'last'
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as get_response:
-            response = await get_response.json()  # .text()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as get_response:
+                response = await get_response.json()  # .text()
+    except Exception as e:
+        print(e)
+        response = []
     if len(response) > 0:
         response = response[0]
         main_source['lieder'] = {
@@ -934,8 +979,6 @@ async def source_setup():
         }
         prev_date = main_source['settings']['created_at'].split('.')
         start_date = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S")
-    # else:
-    #     print(f'[{datetime.now().replace(microsecond=0)}] empty response')
     source = main_source
 
 
@@ -1118,6 +1161,7 @@ async def patching_connection_exchange():
 async def update_setup():
     while True:
         await source_setup()
+        await asyncio.sleep(.1)
 
 
 async def update_lieder_info(sleep=sleep_lieder_update):
@@ -1134,7 +1178,8 @@ async def update_lieder_info(sleep=sleep_lieder_update):
             lieder_positions = Mt.positions_get()
             Mt.shutdown()
             print(f'\nLIEDER {source["lieder"]["login"]} - {len(lieder_positions)} positions :',
-                  datetime.utcnow().replace(microsecond=0), ' dUTC:', UTC_OFFSET_TIMEDELTA)
+                  datetime.utcnow().replace(microsecond=0), ' dUTC:', UTC_OFFSET_TIMEDELTA,
+                  ' Comments:', send_messages)
             trading_event.set()
         await asyncio.sleep(sleep)
 
@@ -1154,29 +1199,24 @@ async def execute_investor(investor):
         for pos_lid in lieder_positions:
             inv_tp = get_pips_tp(pos_lid)
             inv_sl = get_pips_sl(pos_lid)
-
-            if not is_position_exist_in_list(lieder_position=pos_lid, investor_positions=investor_positions) and \
+            if not is_position_exist_in_list(lieder_position=pos_lid, investor_positions=Mt.positions_get()) and \
                     not is_position_exist_in_history(lieder_position=pos_lid):
                 if check_transaction(investor=investor, lieder_position=pos_lid):
                     volume = 1.0 \
                         if investor['changing_multiplier'] == 'Нет' \
-                        else get_deal_volume(investor, lieder_volume=pos_lid.volume,
+                        else get_deal_volume(investor, symbol=pos_lid.symbol, lieder_volume=pos_lid.volume,
                                              lieder_balance_value=lieder_balance
                                              if investor['multiplier'] == 'Баланс' else lieder_equity)
-                    response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
-                                             sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+                    response = open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
+                                             lot=volume, sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
                     try:
-                        rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
-                        output_report.append(rpt)
-                        msg_ext = ''
-                        if response.retcode == 10014:
-                            msg_ext = ' [volume: ' + str(volume) + ']'
-                            print('----------------- TRY VOLUME', volume)
-                            msg = send_retcodes[response.retcode][1]
-                            set_comment(msg + msg_ext + ' : ' + str(response.retcode))
-                            print(msg + msg_ext + ' : ' + str(response.retcode))
-                    except Exception as e:
-                        print(e)
+                        msg = str(investor['login']) + ' ' + send_retcodes[response.retcode][1] + ' : ' + str(
+                            response.retcode)
+                    except AttributeError:
+                        msg = str(investor['login']) + ' ' + send_retcodes[response['retcode']][1] + ' : ' + str(
+                            response['retcode'])
+                    set_comment(msg)
+                    print(msg)
                 else:
                     set_comment('Не выполнено условие +/-')
         check_stop_limits(investor=investor)  # проверка условий стоп-лосс
@@ -1190,8 +1230,6 @@ async def execute_investor(investor):
         close_positions_by_lieder(positions_lieder=lieder_positions,
                                   positions_investor=Mt.positions_get())
 
-    if len(output_report) > 0:
-        print('    ', output_report)
     Mt.shutdown()
 
 
@@ -1232,8 +1270,9 @@ async def execute_investor(investor):
 async def task_manager():
     while True:
         await trading_event.wait()
-        for _ in source['investors']:
-            event_loop.create_task(execute_investor(_))
+        if len(source) > 0:
+            for _ in source['investors']:
+                event_loop.create_task(execute_investor(_))
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
         # await correcting_lots()
@@ -1244,10 +1283,11 @@ async def task_manager():
 
 
 if __name__ == '__main__':
-    print(f'\nСКС запущена [{start_date}]. Обновление Лидера {sleep_lieder_update}с.')
+    print(f'\nСКС запущена [{start_date}]. Обновление Лидера {sleep_lieder_update} с.')
     # set_dummy_data()  # для теста без сервера раскомментировать
     event_loop = asyncio.new_event_loop()
     event_loop.create_task(update_setup())  # для теста без сервера закомментировать
     event_loop.create_task(update_lieder_info())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
+    Mt.shutdown()
