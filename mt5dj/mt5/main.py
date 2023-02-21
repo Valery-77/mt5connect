@@ -255,7 +255,7 @@ def is_disconnect_changed(investor):
     return False
 
 
-def disable_copy(investors_list, investor):
+def disable_dcs(investors_list, investor):
     investor['dcs_access'] = False
     if send_messages:
         return
@@ -292,17 +292,17 @@ def execute_conditions(investor):
 
     if investor['blacklist'] == 'Да':  # если в блек листе
         force_close_all_positions(investor, reason='Блеклист')
-        disable_copy(Mt.positions_get(), investor)
+        disable_dcs(source['investors'], investor)
     if investor['disconnect'] == 'Да':  # если отключиться
         if get_investors_positions_count(investor) == 0:  # если нет открыты сделок
-            disable_copy(Mt.positions_get(), investor)
+            disable_dcs(source['investors'], investor)
 
         if investor['open_trades_disconnect'] == 'Закрыть':  # если сделки закрыть
             force_close_all_positions(investor, 'Закрыто по команде пользователя')
-            disable_copy(Mt.positions_get(), investor)
+            disable_dcs(source['investors'], investor)
 
         elif investor['accompany_transactions'] == 'Нет':  # если сделки оставить и не сопровождать
-            disable_copy(Mt.positions_get(), investor)
+            disable_dcs(source['investors'], investor)
 
 
 def init_mt(init_data, need_login=False):
@@ -470,7 +470,7 @@ def check_stop_limits(investor):
                 if act_pos.magic == MAGIC:
                     close_position(act_pos, 'Закрытие позиции по условию стоп-лосс')
             if investor['open_trades'] == 'Закрыть и отключить':
-                disable_copy(Mt.positions_get(), investor)
+                disable_dcs(source['investors'], investor)
 
 
 def check_transaction(investor, lieder_position):
@@ -659,11 +659,6 @@ def check_notification():
         set_comment('Вы должны оплатить вознаграждение')
 
 
-def check_notification():
-    if source['notification'] == 'Да':
-        set_comment('Вы должны оплатить вознаграждение')
-
-
 async def source_setup():
     global start_date, source
     main_source = {}
@@ -788,7 +783,7 @@ async def source_setup():
         }
         prev_date = main_source['settings']['created_at'].split('.')
         start_date = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S")
-    source = main_source
+    source = main_source.copy()
 
 
 async def update_setup():
@@ -818,6 +813,7 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 def is_position_opened(lieder_position, investor):
+    """Проверка позиции лидера на наличие в списке позиций инвестора"""
     if is_position_exist_in_list(lieder_position=lieder_position, investor_positions=Mt.positions_get()):
         return True
     if is_position_exist_in_history(lieder_position=lieder_position):
@@ -857,7 +853,7 @@ async def execute_investor(investor):
                     except AttributeError:
                         msg = str(investor['login']) + ' ' + send_retcodes[response['retcode']][1] + ' : ' + str(
                             response['retcode'])
-                    if response.retcode != 10009:    # Заявка выполнена
+                    if response.retcode != 10009:  # Заявка выполнена
                         set_comment(msg)
                     print(msg)
                 else:
