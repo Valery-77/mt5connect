@@ -1096,20 +1096,21 @@ async def patching_connection_exchange():
         response = requests.get(url).json()[0]
         api_key_expired = response.get('api_key_expired')
         no_exchange_connection = response.get('no_exchange_connection')
+        id = response.get('id')
         if api_key_expired == "Да" and no_exchange_connection == 'Да':
-            commentary = 'Нет связи с биржей и ключ APi истек'
-            payload = json.dumps({"commentary": commentary})
+            comment = 'Нет связи с биржей и ключ APi истек'
+            payload = json.dumps({"comment": comment})
         elif api_key_expired == "Да":
-            commentary = 'Ключ APi истек'
-            payload = json.dumps({"commentary": commentary})
+            comment = 'Ключ APi истек'
+            payload = json.dumps({"comment": comment})
         elif no_exchange_connection == 'Да':
-            commentary = 'Нет связи с биржей'
-            payload = json.dumps({"commentary": commentary})
+            comment = 'Нет связи с биржей'
+            payload = json.dumps({"comment": comment})
         else:
-            commentary = ''
-            payload = json.dumps({"commentary": commentary})
+            comment = ''
+            payload = json.dumps({"comment": comment})
         headers = {'Content-Type': 'application/json'}
-        patch_url = 'http://my.atimex.io:8000/api/demo_mt5/update/1/'
+        patch_url = f'https://my.atimex.io:8000/api/demo_mt5/patch/{id}/'
         requests.request("PATCH", patch_url, headers=headers, data=payload)
     except Exception as e:
         print("Exception in patching_connection_exchange:", e)
