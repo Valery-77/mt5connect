@@ -818,8 +818,11 @@ async def patching_quotes():
 
 async def patching_connection_exchange():
     try:
-        api_key_expired = source['investors'][0]['api_key_expired']
-        no_exchange_connection = source['investors'][0]['no_exchange_connection']
+        url = 'https://my.atimex.io:8000/api/demo_mt5/last'
+        response = requests.get(url).json()[0]
+        api_key_expired = response.get('api_key_expired')
+        no_exchange_connection = response.get('no_exchange_connection')
+        id = response.get('id')
         if api_key_expired == "Да":
             comment = 'Ключ APi истек'
             for investor in source['investors']:
@@ -830,7 +833,10 @@ async def patching_connection_exchange():
                 force_close_all_positions(investor=investor, reason=comment)
         else:
             comment = ''
-        set_comment(comment=comment)
+        payload = json.dumps({"comment": comment})
+        headers = {'Content-Type': 'application/json'}
+        patch_url = f'https://my.atimex.io:8000/api/demo_mt5/patch/{id}/'
+        requests.request("PATCH", patch_url, headers=headers, data=payload)
     except Exception as e:
         print("Exception in patching_connection_exchange:", e)
 
@@ -880,7 +886,7 @@ async def execute_investor(investor):
     # enable_algotrading()
     global output_report
     output_report = []
-    print(f' - {investor["login"]} - {len(investor_positions)} positions. Access:', investor['dcs_access'])
+    print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'])
     if investor['dcs_access']:
         execute_conditions(investor=investor)  # проверка условий кейса закрытия
         for pos_lid in lieder_positions:
@@ -920,32 +926,39 @@ async def execute_investor(investor):
     Mt.shutdown()
 
 
-async def correcting_lots():
-    try:
-        response_source = dict(requests.get(host+'last').json()[0])
-        if "Корректировать объем" in (response_source.get("recovery_model"), response_source.get("buy_hold_model")):
-            # investors_balance = [x.get("investment_size") for x in investors_list]
-            investors_balance = [source['investors'][0].get("investment_size"),
-                                 source['investors'][1].get("investment_size")]
-            global old_investors_balance
-            if not old_investors_balance:
-                old_investors_balance = investors_balance
-            if investors_balance != old_investors_balance:
-                lots_qoef = [x / y for x, y in zip(investors_balance, old_investors_balance)]
-                for i, qoef in enumerate(lots_qoef):
-                    if qoef != 1.0:
-                        for pos in investor_positions:
-                            print(pos)
-                            # inv_tp = get_pips_tp(pos_lid)
-                            # inv_sl = get_pips_sl(pos_lid)
-                            # for investor in source['investors']:
-                            #     volume = get_deals_volume(investor, lieder_volume=pos_lid.volume,
-                            #                               lieder_balance_value=lieder_balance
-                            #                               if settings['multiplier'] == 'Баланс' else lieder_equity)
-                old_investors_balance = investors_balance
-
-    except Exception as e:
-        print("Exception in correcting_lots:", e)
+# async def correcting_lots():
+#     try:
+#         response_source = dict(requests.get(host+'last').json()[0])
+#         if "Корректировать объем" in (response_source.get("recovery_model"), response_source.get("buy_hold_model")):
+#             # investors_balance = [x.get("investment_size") for x in investors_list]
+#             investors_balance = [source['investors'][0].get("investment_size"),
+#                                  source['investors'][1].get("investment_size")]
+#             global old_investors_balance
+#             if not old_investors_balance:
+#                 old_investors_balance = investors_balance
+#             if investors_balance != old_investors_balance:
+#                 lots_qoef = [x / y for x, y in zip(investors_balance, old_investors_balance)]
+#                 for i, lot in enumerate(lots_qoef):
+#                     if lot != 1.0:
+#                         for pos in investor_positions:
+#                             print(pos)
+#                             # inv_tp = get_pips_tp(pos_lid)
+#                             # inv_sl = get_pips_sl(pos_lid)
+#                             # for investor in source['investors']:
+#                             #     volume = get_deals_volume(investor, lieder_volume=pos_lid.volume,
+#                             #                               lieder_balance_value=lieder_balance
+#                             #                               if settings['multiplier'] == 'Баланс' else lieder_equity)
+#                             #     response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
+#                             #                              sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+#                             #     rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
+#                             #     output_report.append(rpt)
+#                             #
+#                             #     if response.retcode == 10014:
+#                             #         print('-----------------VOLUME', volume)
+#                 old_investors_balance = investors_balance
+#
+#     except Exception as e:
+#         print("Exception in correcting_lots:", e)
 
 
 async def task_manager():
