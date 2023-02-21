@@ -151,6 +151,8 @@ output_report = []  # сюда выводится отчет
 lieder_balance = 0  # default var
 lieder_equity = 0  # default var
 lieder_positions = []  # default var
+investor_positions = {}  # default var
+old_investors_balance = []
 start_date = datetime.now().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA  # default var
 trading_event = asyncio.Event()  # init async event
 
@@ -1235,11 +1237,11 @@ async def execute_investor(investor):
 
 # async def correcting_lots():
 #     try:
-#         response_source = dict(requests.get(host).json()[0])
+#         response_source = dict(requests.get(host+'last').json()[0])
 #         if "Корректировать объем" in (response_source.get("recovery_model"), response_source.get("buy_hold_model")):
 #             # investors_balance = [x.get("investment_size") for x in investors_list]
-#             investors_balance = [investors_list[0].get("investment_size"),
-#                                  investors_list[1].get("investment_size")]
+#             investors_balance = [source['investors'][0].get("investment_size"),
+#                                  source['investors'][1].get("investment_size")]
 #             global old_investors_balance
 #             if not old_investors_balance:
 #                 old_investors_balance = investors_balance
@@ -1247,20 +1249,21 @@ async def execute_investor(investor):
 #                 lots_qoef = [x / y for x, y in zip(investors_balance, old_investors_balance)]
 #                 for i, lot in enumerate(lots_qoef):
 #                     if lot != 1.0:
-#                         for pos_lid in lieder_positions:
-#                             inv_tp = get_pips_tp(pos_lid)
-#                             inv_sl = get_pips_sl(pos_lid)
-#                             for investor in investors_list:
-#                                 volume = get_deals_volume(investor, lieder_volume=pos_lid.volume,
-#                                                           lieder_balance_value=lieder_balance
-#                                                           if settings['multiplier'] == 'Баланс' else lieder_equity)
-#                                 response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
-#                                                          sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
-#                                 rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
-#                                 output_report.append(rpt)
-#
-#                                 if response.retcode == 10014:
-#                                     print('-----------------VOLUME', volume)
+#                         for pos in investor_positions:
+#                             print(pos)
+#                             # inv_tp = get_pips_tp(pos_lid)
+#                             # inv_sl = get_pips_sl(pos_lid)
+#                             # for investor in source['investors']:
+#                             #     volume = get_deals_volume(investor, lieder_volume=pos_lid.volume,
+#                             #                               lieder_balance_value=lieder_balance
+#                             #                               if settings['multiplier'] == 'Баланс' else lieder_equity)
+#                             #     response = open_position(symbol=pos_lid.symbol, deal_type=pos_lid.type, lot=volume,
+#                             #                              sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+#                             #     rpt = {'code': response.retcode, 'message': send_retcodes[response.retcode][1]}
+#                             #     output_report.append(rpt)
+#                             #
+#                             #     if response.retcode == 10014:
+#                             #         print('-----------------VOLUME', volume)
 #                 old_investors_balance = investors_balance
 #
 #     except Exception as e:
@@ -1268,11 +1271,13 @@ async def execute_investor(investor):
 
 
 async def task_manager():
+    global investor_positions
     while True:
         await trading_event.wait()
         if len(source) > 0:
-            for _ in source['investors']:
+            for i, _ in enumerate(source['investors']):
                 event_loop.create_task(execute_investor(_))
+                investor_positions[f"investor{i+1}"] = Mt.positions_get()
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
         # await correcting_lots()
