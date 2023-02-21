@@ -901,7 +901,12 @@ async def execute_investor(investor):
                     except AttributeError:
                         msg = str(investor['login']) + ' ' + send_retcodes[response['retcode']][1] + ' : ' + str(
                             response['retcode'])
-                    if response.retcode != 10009:  # Заявка выполнена
+                    try:
+                        ret_code = response.retcode
+                    except AttributeError:
+                        ret_code = response['retcode']
+
+                    if ret_code != 10009:  # Заявка выполнена
                         set_comment(msg)
                     print(msg)
                 else:
@@ -955,7 +960,7 @@ async def task_manager():
         if len(source) > 0:
             for i, _ in enumerate(source['investors']):
                 event_loop.create_task(execute_investor(_))
-                investor_positions[f"investor{i+1}"] = Mt.positions_get()
+                investor_positions[f"investor{i + 1}"] = Mt.positions_get()
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
         # await correcting_lots()
