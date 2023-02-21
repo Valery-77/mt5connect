@@ -820,6 +820,7 @@ async def patching_connection_exchange():
     try:
         api_key_expired = source['investors'][0]['api_key_expired']
         no_exchange_connection = source['investors'][0]['no_exchange_connection']
+        comment_json = source['investors'][0]['comment']
         if api_key_expired == "Да":
             comment = 'Ключ APi истек'
             for investor in source['investors']:
@@ -829,7 +830,7 @@ async def patching_connection_exchange():
             for investor in source['investors']:
                 force_close_all_positions(investor=investor, reason=comment)
         else:
-            comment = ''
+            comment = comment_json
         set_comment(comment=comment)
     except Exception as e:
         print("Exception in patching_connection_exchange:", e)
