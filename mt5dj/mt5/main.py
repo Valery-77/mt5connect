@@ -818,8 +818,8 @@ async def patching_quotes():
 
 async def patching_connection_exchange():
     try:
-        api_key_expired = source[0]['api_key_expired']
-        no_exchange_connection = source[0]['no_exchange_connection']
+        api_key_expired = source['investors'][0]['api_key_expired']
+        no_exchange_connection = source['investors'][0]['no_exchange_connection']
         if api_key_expired == "Да":
             comment = 'Ключ APi истек'
             for investor in source['investors']:
