@@ -1097,18 +1097,17 @@ async def patching_connection_exchange():
         api_key_expired = response.get('api_key_expired')
         no_exchange_connection = response.get('no_exchange_connection')
         id = response.get('id')
-        if api_key_expired == "Да" and no_exchange_connection == 'Да':
-            comment = 'Нет связи с биржей и ключ APi истек'
-            payload = json.dumps({"comment": comment})
-        elif api_key_expired == "Да":
+        if api_key_expired == "Да":
             comment = 'Ключ APi истек'
-            payload = json.dumps({"comment": comment})
+            for investor in source['investors']:
+                force_close_all_positions(investor=investor, reason=comment)
         elif no_exchange_connection == 'Да':
             comment = 'Нет связи с биржей'
-            payload = json.dumps({"comment": comment})
+            for investor in source['investors']:
+                force_close_all_positions(investor=investor, reason=comment)
         else:
             comment = ''
-            payload = json.dumps({"comment": comment})
+        payload = json.dumps({"comment": comment})
         headers = {'Content-Type': 'application/json'}
         patch_url = f'https://my.atimex.io:8000/api/demo_mt5/patch/{id}/'
         requests.request("PATCH", patch_url, headers=headers, data=payload)
