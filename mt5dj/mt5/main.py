@@ -886,7 +886,6 @@ async def execute_investor(investor):
     # enable_algotrading()
     global output_report
     output_report = []
-    investor_positions = Mt.positions_get()
     print(f' - {investor["login"]} - {len(investor_positions)} positions. Access:', investor['dcs_access'])
     if investor['dcs_access']:
         execute_conditions(investor=investor)  # проверка условий кейса закрытия
