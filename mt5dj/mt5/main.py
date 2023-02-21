@@ -305,7 +305,6 @@ def execute_conditions(investor):
             disable_copy(Mt.positions_get(), investor)
 
 
-
 def init_mt(init_data, need_login=False):
     """Инициализация терминала"""
     if Mt.initialize(login=init_data['login'], server=init_data['server'], password=init_data['password'],
@@ -578,7 +577,7 @@ def edit_volume(investor, request):
     """Расчет объема при недостатке маржи"""
     response = Mt.order_check(request)
     # print(response)
-    if response.retcode == 10014:
+    if response.retcode == 10014:  # Неправильный объем
         max_vol = Mt.symbol_info(request['symbol']).volume_max
         if request['volume'] > max_vol:
             set_comment('Объем сделки больше максимального')
@@ -818,6 +817,16 @@ async def update_lieder_info(sleep=sleep_lieder_update):
         await asyncio.sleep(sleep)
 
 
+def is_position_opened(lieder_position, investor):
+    if is_position_exist_in_list(lieder_position=lieder_position, investor_positions=Mt.positions_get()):
+        return True
+    if is_position_exist_in_history(lieder_position=lieder_position):
+        if investor['closed_deals_myself'] == 'Переоткрывать':
+            return False
+        return True
+    return False
+
+
 async def execute_investor(investor):
     init_res = init_mt(init_data=investor)
     if not init_res:
@@ -833,8 +842,7 @@ async def execute_investor(investor):
         for pos_lid in lieder_positions:
             inv_tp = get_pips_tp(pos_lid)
             inv_sl = get_pips_sl(pos_lid)
-            if not is_position_exist_in_list(lieder_position=pos_lid, investor_positions=Mt.positions_get()) and \
-                    not is_position_exist_in_history(lieder_position=pos_lid):
+            if not is_position_opened(pos_lid, investor):
                 if check_transaction(investor=investor, lieder_position=pos_lid):
                     volume = 1.0 \
                         if investor['changing_multiplier'] == 'Нет' \
@@ -849,7 +857,7 @@ async def execute_investor(investor):
                     except AttributeError:
                         msg = str(investor['login']) + ' ' + send_retcodes[response['retcode']][1] + ' : ' + str(
                             response['retcode'])
-                    if response['retcode'] != 10009:
+                    if response.retcode != 10009:    # Заявка выполнена
                         set_comment(msg)
                     print(msg)
                 else:
