@@ -927,13 +927,15 @@ async def execute_investor(investor):
     Mt.shutdown()
 
 
-async def correcting_lots():
+async def correcting_lots(investor):    # Нужно считать для одного инвестора. Потом прогоним для каждого. Зачем асинхрон?
     try:
-        response_source = dict(requests.get(host + 'last').json()[0])
-        if "Корректировать объем" in (response_source.get("recovery_model"), response_source.get("buy_hold_model")):
+        # response_source = dict(requests.get(host + 'last').json()[0])
+        # if "Корректировать объем" in (response_source.get("recovery_model"), response_source.get("buy_hold_model")):
+        if "Корректировать объем" in (investor["recovery_model"], investor["buy_hold_model"]):
             # investors_balance = [x.get("investment_size") for x in investors_list]
-            investors_balance = [source['investors'][0].get("investment_size"),
-                                 source['investors'][1].get("investment_size")]
+            investors_balance = investor['investment_size']
+            # investors_balance = [source['investors'][0].get("investment_size"),
+            #                      source['investors'][1].get("investment_size")]
             global old_investors_balance
             if not old_investors_balance:
                 old_investors_balance = investors_balance
