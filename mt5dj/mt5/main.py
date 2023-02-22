@@ -996,9 +996,9 @@ async def task_manager():
 
 if __name__ == '__main__':
     print(f'\nСКС запущена [{start_date}]. Обновление Лидера {sleep_lieder_update} с.')
-    set_dummy_data()  # для теста без сервера раскомментировать
+    # set_dummy_data()  # для теста без сервера раскомментировать
     event_loop = asyncio.new_event_loop()
-    # event_loop.create_task(update_setup())  # для теста без сервера закомментировать
+    event_loop.create_task(update_setup())  # для теста без сервера закомментировать
     event_loop.create_task(update_lieder_info())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
