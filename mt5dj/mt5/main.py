@@ -76,6 +76,15 @@ last_errors = {
     -10003: ('RES_E_INTERNAL_FAIL_INIT', 'internal IPC initialization fail'),
     -10003: ('RES_E_INTERNAL_FAIL_CONNECT', 'internal IPC no ipc'),
     -10005: ('RES_E_INTERNAL_FAIL_TIMEOUT', 'internal timeout')}
+reasons_code = {
+    '01': 'Открыто СКС',
+    '02': 'Блеклист',
+    '03': 'Закрыто по команде пользователя',
+    '04': 'Ключ APi истек',
+    '05': 'Нет связи с биржей',
+    '06': 'Закрыто инвестором',
+    '07': 'Закрыто по условию стоп-лосс',
+}
 
 
 class DealComment:
@@ -86,14 +95,6 @@ class DealComment:
 
     lieder_ticket: int
     reason: str
-
-    # def __init__(self, ticket: int, reason: str):
-    #     if reason is None or ticket is None:
-    #         self.lieder_ticket = -1
-    #         self.reason = ''
-    #     else:
-    #         self.lieder_ticket = ticket
-    #         self.reason = reason
 
     def __init__(self):
         self.lieder_ticket = -1
@@ -147,7 +148,7 @@ MAGIC = 9876543210  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
 UTC_OFFSET_TIMEDELTA = datetime.now() - datetime.utcnow()
 
-output_report = []  # сюда выводится отчет
+# output_report = []  # сюда выводится отчет
 lieder_balance = 0  # default var
 lieder_equity = 0  # default var
 lieder_positions = []  # default var
@@ -156,8 +157,8 @@ old_investors_balance = []
 start_date = datetime.now().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA  # default var
 trading_event = asyncio.Event()  # init async event
 
-sleep_lieder_update = 1  # пауза для обновления лидера
 send_messages = True  # отправлять сообщения в базу
+sleep_lieder_update = 1  # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -180,6 +181,10 @@ source = {
 #     except AttributeError:
 #         print(f'Невозможно подключиться к терминалу : {datetime.now()}')
 #         exit()
+
+def check_notification(investor):
+    if investor['notification'] == 'Да':
+        set_comment('Вы должны оплатить вознаграждение')
 
 
 def set_dummy_data():
@@ -253,10 +258,14 @@ def set_dummy_data():
 
 
 def is_disconnect_changed(investor):
+    result = None
     if investor['disconnect_previous'] != investor['disconnect']:
-        investor['disconnect_previous'] = investor['disconnect']
-        return True
-    return False
+        if investor['disconnect'] == 'Да':
+            result = 'Disabled'
+        else:
+            result = 'Enabled'
+        investor['disconnect_previous'] = investor['disconnect'].copy()
+    return result
 
 
 def disable_dcs(investors_list, investor):
@@ -295,14 +304,14 @@ def execute_conditions(investor):
         set_comment('Инициатор отключения: ' + investor['shutdown_initiator'])
 
     if investor['blacklist'] == 'Да':  # если в блек листе
-        force_close_all_positions(investor, reason='Блеклист')
+        force_close_all_positions(investor, reason='02')
         disable_dcs(source['investors'], investor)
     if investor['disconnect'] == 'Да':  # если отключиться
-        if get_investors_positions_count(investor) == 0:  # если нет открыты сделок
+        if get_investors_positions_count(investor=investor, only_own=True) == 0:  # если нет открытых сделок
             disable_dcs(source['investors'], investor)
 
         if investor['open_trades_disconnect'] == 'Закрыть':  # если сделки закрыть
-            force_close_all_positions(investor, 'Закрыто по команде пользователя')
+            force_close_all_positions(investor, reason='03')
             disable_dcs(source['investors'], investor)
 
         elif investor['accompany_transactions'] == 'Нет':  # если сделки оставить и не сопровождать
@@ -345,20 +354,27 @@ def get_pips_sl(position, price=None):
     return result
 
 
-def get_investors_positions_count(investor):
+def get_investors_positions_count(investor, only_own):
     """Количество открытых позиций"""
     init_res = init_mt(init_data=investor)
-    return Mt.positions_total() if init_res else -1
+    positions = Mt.positions_get()
+    count = 0
+    if only_own:
+        for _ in positions:
+            if DealComment.is_valid_string(_.comment):
+                count += 1
+    else:
+        count = len(positions)
+    return count if init_res else -1
 
 
-def is_position_exist_in_list(lieder_position, investor_positions):
-    if len(investor_positions) <= 0:
-        return False
-    for pos in investor_positions:
-        if DealComment.is_valid_string(pos.comment):
-            comment = DealComment().set_from_string(pos.comment)
-            if lieder_position.ticket == comment.lieder_ticket:
-                return True
+def is_position_exist_in_list(lieder_position, invest_positions):
+    if len(invest_positions) > 0:
+        for pos in invest_positions:
+            if DealComment.is_valid_string(pos.comment):
+                comment = DealComment().set_from_string(pos.comment)
+                if lieder_position.ticket == comment.lieder_ticket:
+                    return True
     return False
 
 
@@ -377,8 +393,17 @@ def is_position_exist_in_history(lieder_position):
                 comment = DealComment().set_from_string(pos.comment)
                 if lieder_position.ticket == comment.lieder_ticket:
                     return True
-    else:
-        return False
+    return False
+
+
+def is_position_opened(lieder_position, investor):
+    """Проверка позиции лидера на наличие в списке позиций и истории инвестора"""
+    if is_position_exist_in_list(lieder_position=lieder_position, invest_positions=Mt.positions_get()):
+        return True
+    if is_position_exist_in_history(lieder_position=lieder_position):
+        if investor['closed_deals_myself'] == 'Переоткрывать':
+            return False
+        return True
     return False
 
 
@@ -472,7 +497,7 @@ def check_stop_limits(investor):
             active_positions = Mt.positions_get()
             for act_pos in active_positions:
                 if act_pos.magic == MAGIC:
-                    close_position(act_pos, 'Закрытие позиции по условию стоп-лосс')
+                    close_position(act_pos, '07')
             if investor['open_trades'] == 'Закрыть и отключить':
                 disable_dcs(source['investors'], investor)
 
@@ -513,8 +538,12 @@ def check_transaction(investor, lieder_position):
     return True if res is not None and transaction_plus >= res >= transaction_minus else False  # Проверка на заданные отклонения
 
 
-def get_deal_volume(investor, symbol, lieder_volume, lieder_balance_value):
+def get_deal_volume(investor, lieder_position, lieder_balance_value):
     """Расчет множителя"""
+    if investor['changing_multiplier'] == 'Нет':
+        return 1.0
+    symbol = lieder_position.symbol
+    lieder_volume = lieder_position.volume
     multiplier = investor['multiplier_value']
     investment_size = investor['investment_size']
     get_for_balance = True if investor['multiplier'] == 'Баланс' else False
@@ -527,11 +556,10 @@ def get_deal_volume(investor, symbol, lieder_volume, lieder_balance_value):
         decimals = str(min_lot)[::-1].find('.')
     except AttributeError:
         decimals = 2
-    result = round(lieder_volume * multiplier * ext_k, decimals)
-    return result
+    return round(lieder_volume * multiplier * ext_k, decimals)
 
 
-def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0, sl=0):
+def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, sl=0.0):
     """Открытие позиции"""
     try:
         point = Mt.symbol_info(symbol).point
@@ -554,7 +582,7 @@ def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0, sl
         return {'retcode': -200}
     comment = DealComment()
     comment.lieder_ticket = sender_ticket
-    comment.reason = 'Открыто_СКС'
+    comment.reason = '01'
     request = {
         "action": Mt.TRADE_ACTION_DEAL,
         "symbol": symbol,
@@ -578,9 +606,8 @@ def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0, sl
 
 
 def edit_volume(investor, request):
-    """Расчет объема при недостатке маржи"""
+    """Расчет объема при недостатке маржи и проверка на максимальный"""
     response = Mt.order_check(request)
-    # print(response)
     if response.retcode == 10014:  # Неправильный объем
         max_vol = Mt.symbol_info(request['symbol']).volume_max
         if request['volume'] > max_vol:
@@ -655,12 +682,7 @@ def close_positions_by_lieder(positions_lieder, positions_investor):
             non_existed_positions.append(ip)
     for pos in non_existed_positions:
         print('     close position:', pos.comment)
-        close_position(pos, reason='Закрыто инвестором')
-
-
-def check_notification():
-    if source['notification'] == 'Да':
-        set_comment('Вы должны оплатить вознаграждение')
+        close_position(pos, reason='06')
 
 
 async def source_setup():
@@ -822,11 +844,11 @@ async def patching_connection_exchange():
         no_exchange_connection = source['investors'][0]['no_exchange_connection']
         comment_json = source['investors'][0]['comment']
         if api_key_expired == "Да":
-            comment = 'Ключ APi истек'
+            comment = '04'
             for investor in source['investors']:
                 force_close_all_positions(investor=investor, reason=comment)
         elif no_exchange_connection == 'Да':
-            comment = 'Нет связи с биржей'
+            comment = '05'
             for investor in source['investors']:
                 force_close_all_positions(investor=investor, reason=comment)
         else:
@@ -862,73 +884,52 @@ async def update_lieder_info(sleep=sleep_lieder_update):
         await asyncio.sleep(sleep)
 
 
-def is_position_opened(lieder_position, investor):
-    """Проверка позиции лидера на наличие в списке позиций инвестора"""
-    if is_position_exist_in_list(lieder_position=lieder_position, investor_positions=Mt.positions_get()):
-        return True
-    if is_position_exist_in_history(lieder_position=lieder_position):
-        if investor['closed_deals_myself'] == 'Переоткрывать':
-            return False
-        return True
-    return False
-
-
 async def execute_investor(investor):
+    check_notification(investor)
     init_res = init_mt(init_data=investor)
     if not init_res:
         set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
     # enable_algotrading()
-    global output_report
-    output_report = []
     print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'])
     if investor['dcs_access']:
         execute_conditions(investor=investor)  # проверка условий кейса закрытия
+    if investor['dcs_access']:
         for pos_lid in lieder_positions:
             inv_tp = get_pips_tp(pos_lid)
             inv_sl = get_pips_sl(pos_lid)
             if not is_position_opened(pos_lid, investor):
                 if check_transaction(investor=investor, lieder_position=pos_lid):
-                    volume = 1.0 \
-                        if investor['changing_multiplier'] == 'Нет' \
-                        else get_deal_volume(investor, symbol=pos_lid.symbol, lieder_volume=pos_lid.volume,
-                                             lieder_balance_value=lieder_balance
-                                             if investor['multiplier'] == 'Баланс' else lieder_equity)
+                    volume = get_deal_volume(investor, lieder_position=pos_lid,
+                                             lieder_balance_value=lieder_balance if investor[
+                                                                                        'multiplier'] == 'Баланс' else lieder_equity)
                     response = open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                              lot=volume, sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
-                    try:
-                        msg = str(investor['login']) + ' ' + send_retcodes[response.retcode][1] + ' : ' + str(
-                            response.retcode)
-                    except AttributeError:
-                        msg = str(investor['login']) + ' ' + send_retcodes[response['retcode']][1] + ' : ' + str(
-                            response['retcode'])
                     try:
                         ret_code = response.retcode
                     except AttributeError:
                         ret_code = response['retcode']
-
+                    msg = str(investor['login']) + ' ' + send_retcodes[ret_code][1] + ' : ' + str(ret_code)
                     if ret_code != 10009:  # Заявка выполнена
-                        set_comment(msg)
+                        set_comment('\t' + msg)
                     print(msg)
-                else:
-                    set_comment('Не выполнено условие +/-')
+            else:
+                set_comment('Не выполнено условие +/-')
         check_stop_limits(investor=investor)  # проверка условий стоп-лосс
     else:
         print('ACCESS DISABLED')
-
     # закрытие позиций от лидера
     if investor['dcs_access'] or \
-            (not investor['dcs_access']
-             and investor['accompany_transactions'] == 'Да'):  # если сопровождать сделки или доступ есть
+            (not investor['dcs_access'] and investor[
+                'accompany_transactions'] == 'Да'):  # если сопровождать сделки или доступ есть
         close_positions_by_lieder(positions_lieder=lieder_positions,
                                   positions_investor=Mt.positions_get())
-
     Mt.shutdown()
 
 
 async def correcting_lots():
     try:
-        response_source = dict(requests.get(host+'last').json()[0])
+        response_source = dict(requests.get(host + 'last').json()[0])
         if "Корректировать объем" in (response_source.get("recovery_model"), response_source.get("buy_hold_model")):
             # investors_balance = [x.get("investment_size") for x in investors_list]
             investors_balance = [source['investors'][0].get("investment_size"),
