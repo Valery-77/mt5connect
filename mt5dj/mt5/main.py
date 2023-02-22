@@ -510,7 +510,14 @@ def check_transaction(investor, lieder_position):
         deal_time = int(lieder_position.time_update - UTC_OFFSET_TIMEDELTA.seconds)
         curr_time = int(datetime.timestamp(datetime.now().replace(microsecond=0)))
         delta_time = curr_time - deal_time
+        set_comment({
+            "timeout": timeout,
+            "deal_time": deal_time,
+            "curr_time": curr_time,
+            "delta_time": delta_time
+        })
         # print('=========', datetime.fromtimestamp(deal_time), datetime.fromtimestamp(curr_time), delta_time)
+
         if delta_time > timeout:  # если время больше заданного
             return False
 
