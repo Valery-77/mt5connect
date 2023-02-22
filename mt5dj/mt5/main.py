@@ -6,6 +6,7 @@ from math import fabs
 import MetaTrader5 as Mt
 import requests
 from django.core.serializers.json import DjangoJSONEncoder
+import copy
 
 # from win32gui import PostMessage, GetAncestor, FindWindow
 
@@ -320,8 +321,9 @@ def execute_conditions(investor):
 
 def init_mt(init_data, need_login=False):
     """Инициализация терминала"""
-    if Mt.initialize(login=init_data['login'], server=init_data['server'], password=init_data['password'],
-                     path=init_data['terminal_path'], timeout=TIMEOUT_INIT):
+    res = Mt.initialize(login=init_data['login'], server=init_data['server'], password=init_data['password'],
+                        path=init_data['terminal_path'], timeout=TIMEOUT_INIT)
+    if res:
         # print(f'INVESTOR account {init_data["login"]} : {datetime.now()}')
         if need_login:
             if not Mt.login(login=init_data['login'], server=init_data['server'], password=init_data['password']):
@@ -502,14 +504,25 @@ def check_stop_limits(investor):
                 disable_dcs(source['investors'], investor)
 
 
+def get_time_offset():
+    rates = Mt.copy_rates_from_pos('EURUSD', Mt.TIMEFRAME_M1, 0, 1)
+    server_time = datetime.fromtimestamp(rates[0][0])
+    current_time = datetime.now().replace(microsecond=0)
+    delta = server_time.hour - current_time.hour
+    return delta * 3600
+    # print(server_time.hour, current_time.hour, delta*3600)
+    # exit()
+
+
 def check_transaction(investor, lieder_position):
     """Проверка открытия позиции"""
     price_refund = True if investor['price_refund'] == 'Да' else False
-    if not price_refund:  # если не возврат цены
+    if True:  # not price_refund:  # если не возврат цены
         timeout = investor['waiting_time'] * 60
-        deal_time = int(lieder_position.time_update - UTC_OFFSET_TIMEDELTA.seconds)
+        deal_time = int(lieder_position.time_update - get_time_offset())
         curr_time = int(datetime.timestamp(datetime.now().replace(microsecond=0)))
         delta_time = curr_time - deal_time
+        # print('=========', datetime.fromtimestamp(deal_time), datetime.fromtimestamp(curr_time), delta_time, timeout)
         set_comment({
             "timeout": timeout,
             "deal_time": deal_time,
@@ -934,7 +947,7 @@ async def execute_investor(investor):
     Mt.shutdown()
 
 
-async def correcting_lots(investor):    # Нужно считать для одного инвестора. Потом прогоним для каждого. Зачем асинхрон?
+async def correcting_lots(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого. Зачем асинхрон?
     try:
         # response_source = dict(requests.get(host + 'last').json()[0])
         # if "Корректировать объем" in (response_source.get("recovery_model"), response_source.get("buy_hold_model")):
@@ -971,7 +984,7 @@ async def task_manager():
         if len(source) > 0:
             for i, _ in enumerate(source['investors']):
                 event_loop.create_task(execute_investor(_))
-                investor_positions[f"investor{i + 1}"] = Mt.positions_get()
+                investor_positions[f"investor{i + 1}"] = Mt.positions_get()  # Здесь косяк. Так работать не будет
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
         # await correcting_lots()
@@ -983,9 +996,9 @@ async def task_manager():
 
 if __name__ == '__main__':
     print(f'\nСКС запущена [{start_date}]. Обновление Лидера {sleep_lieder_update} с.')
-    # set_dummy_data()  # для теста без сервера раскомментировать
+    set_dummy_data()  # для теста без сервера раскомментировать
     event_loop = asyncio.new_event_loop()
-    event_loop.create_task(update_setup())  # для теста без сервера закомментировать
+    # event_loop.create_task(update_setup())  # для теста без сервера закомментировать
     event_loop.create_task(update_lieder_info())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
