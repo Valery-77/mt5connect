@@ -517,7 +517,7 @@ def get_time_offset():
 def check_transaction(investor, lieder_position):
     """Проверка открытия позиции"""
     price_refund = True if investor['price_refund'] == 'Да' else False
-    if True:  # not price_refund:  # если не возврат цены
+    if not price_refund:  # если не возврат цены
         timeout = investor['waiting_time'] * 60
         deal_time = int(lieder_position.time_update - get_time_offset())
         curr_time = int(datetime.timestamp(datetime.now().replace(microsecond=0)))
