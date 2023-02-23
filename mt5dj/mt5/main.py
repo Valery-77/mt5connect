@@ -154,7 +154,7 @@ lieder_balance = 0  # default var
 lieder_equity = 0  # default var
 lieder_positions = []  # default var
 investor_positions = {}  # default var
-old_investors_balance = []
+old_investors_balance = {}
 start_date = datetime.now().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA  # default var
 trading_event = asyncio.Event()  # init async event
 
@@ -532,6 +532,7 @@ def check_transaction(investor, lieder_position):
         # print('=========', datetime.fromtimestamp(deal_time), datetime.fromtimestamp(curr_time), delta_time)
 
         if delta_time > timeout:  # если время больше заданного
+            print("Время истекло")
             return False
 
     transaction_type = 0
@@ -905,8 +906,11 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
+    global investor_positions
     check_notification(investor)
     init_res = init_mt(init_data=investor)
+    login = investor.get("login")
+    investor_positions[f"investor{login}"] = Mt.positions_get()
     if not init_res:
         set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
@@ -947,47 +951,37 @@ async def execute_investor(investor):
     Mt.shutdown()
 
 
-async def correcting_lots(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого. Зачем асинхрон?
+def get_new_volume(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого.
     try:
-        # response_source = dict(requests.get(host + 'last').json()[0])
-        # if "Корректировать объем" in (response_source.get("recovery_model"), response_source.get("buy_hold_model")):
         if "Корректировать объем" in (investor["recovery_model"], investor["buy_hold_model"]):
-            # investors_balance = [x.get("investment_size") for x in investors_list]
             investors_balance = investor['investment_size']
-            # investors_balance = [source['investors'][0].get("investment_size"),
-            #                      source['investors'][1].get("investment_size")]
-            global old_investors_balance
-            if not old_investors_balance:
-                old_investors_balance = investors_balance
-            if investors_balance != old_investors_balance:
-                lots_qoef = [x / y for x, y in zip(investors_balance, old_investors_balance)]
-                for i, qoef in enumerate(lots_qoef):
-                    if qoef != 1.0:
-                        for pos in investor_positions:
-                            print(pos)
-                            # inv_tp = get_pips_tp(pos_lid)
-                            # inv_sl = get_pips_sl(pos_lid)
-                            # for investor in source['investors']:
-                            #     volume = get_deals_volume(investor, lieder_volume=pos_lid.volume,
-                            #                               lieder_balance_value=lieder_balance
-                            #                               if settings['multiplier'] == 'Баланс' else lieder_equity)
-                old_investors_balance = investors_balance
-
+            global old_investors_balance, investor_positions
+            login = investor.get("login")
+            if not old_investors_balance[login]:
+                old_investors_balance[login] = investors_balance
+            if investors_balance != old_investors_balance[login]:
+                lots_qoef = investors_balance / old_investors_balance[login]
+                new_volumes = []
+                if lots_qoef != 1.0:
+                    for pos in list(investor_positions.keys()):
+                        investor_pos = investor_positions.get(pos)
+                        volume = investor_pos.volume
+                        new_volumes.append(lots_qoef*volume)
+                old_investors_balance[login] = investors_balance
+                return new_volumes
     except Exception as e:
-        print("Exception in correcting_lots:", e)
+        print("Exception in get_new_volume:", e)
 
 
 async def task_manager():
-    global investor_positions
     while True:
         await trading_event.wait()
         if len(source) > 0:
             for i, _ in enumerate(source['investors']):
                 event_loop.create_task(execute_investor(_))
-                investor_positions[f"investor{i + 1}"] = Mt.positions_get()  # Здесь косяк. Так работать не будет
+                get_new_volume(_)
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
-        # await correcting_lots()
         await patching_connection_exchange()
         if current_time == "10:00:00":
             await patching_quotes()
