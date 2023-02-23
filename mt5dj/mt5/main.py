@@ -965,7 +965,7 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 async def execute_investor(investor):
     check_notification(investor)
     init_res = init_mt(init_data=investor)
-    login = investor.get("login")
+    correct_volume(investor)
     if not init_res:
         set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
@@ -1019,12 +1019,11 @@ def correct_volume(investor):  # Нужно считать для одного �
                 lots_qoef = investors_balance / old_investors_balance[login]
                 if lots_qoef != 1.0:
                     investor_positions = get_investor_positions(investor=investor, only_own=False)
-                    for pos in list(investor_positions.keys()):
-                        investor_pos = investor_positions.get(pos)
+                    for investor_pos in investor_positions:
                         volume = investor_pos.volume
                         symbol = investor_pos.symbol
                         deal_type = investor_pos.type
-                        sender_ticket = investor_pos.sender_ticket
+                        sender_ticket = investor_pos.ticket
                         lot = lots_qoef*volume
                         open_position(investor=investor,
                                       symbol=symbol,
@@ -1042,7 +1041,6 @@ async def task_manager():
         if len(source) > 0:
             for i, _ in enumerate(source['investors']):
                 event_loop.create_task(execute_investor(_))
-                correct_volume(_)
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
         await patching_connection_exchange()
