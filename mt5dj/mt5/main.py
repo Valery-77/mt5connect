@@ -1,14 +1,14 @@
 import asyncio
-import aiohttp
 import json
 from datetime import datetime, timedelta
 from math import fabs
-import MetaTrader5 as Mt_lid
+
 import MetaTrader5 as Mt_inv_1
 import MetaTrader5 as Mt_inv_2
+import MetaTrader5 as Mt_lid
+import aiohttp
 import requests
 from django.core.serializers.json import DjangoJSONEncoder
-import copy
 
 # from win32gui import PostMessage, GetAncestor, FindWindow
 
@@ -1012,15 +1012,21 @@ def get_new_volume(investor):  # Нужно считать для одного �
                 old_investors_balance[login] = investors_balance
             if investors_balance != old_investors_balance[login]:
                 lots_qoef = investors_balance / old_investors_balance[login]
-                new_volumes = []
                 if lots_qoef != 1.0:
                     investor_positions = get_investor_positions(investor=investor, only_own=False)
                     for pos in list(investor_positions.keys()):
                         investor_pos = investor_positions.get(pos)
                         volume = investor_pos.volume
-                        new_volumes.append(lots_qoef*volume)
+                        symbol = investor_pos.symbol
+                        deal_type = investor_pos.type
+                        sender_ticket = investor_pos.sender_ticket
+                        lot = lots_qoef*volume
+                        open_position(investor=investor,
+                                      symbol=symbol,
+                                      deal_type=deal_type,
+                                      lot=lot,
+                                      sender_ticket=sender_ticket)
                 old_investors_balance[login] = investors_balance
-                return new_volumes
     except Exception as e:
         print("Exception in get_new_volume:", e)
 
@@ -1031,6 +1037,7 @@ async def task_manager():
         if len(source) > 0:
             for i, _ in enumerate(source['investors']):
                 event_loop.create_task(execute_investor(_))
+                get_new_volume(_)
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
         await patching_connection_exchange()
