@@ -8,7 +8,6 @@ import MetaTrader5 as Mt_inv_1
 import MetaTrader5 as Mt_inv_2
 import requests
 from django.core.serializers.json import DjangoJSONEncoder
-import copy
 
 # from win32gui import PostMessage, GetAncestor, FindWindow
 
@@ -157,6 +156,7 @@ UTC_OFFSET_TIMEDELTA = datetime.now() - datetime.utcnow()
 lieder_balance = 0  # default var
 lieder_equity = 0  # default var
 lieder_positions = []  # default var
+investors_disconnect_store = [[], []]
 old_investors_balance = {}
 start_date = datetime.now().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA  # default var
 trading_event = asyncio.Event()  # init async event
@@ -261,19 +261,35 @@ def set_dummy_data():
     }
 
 
-def is_disconnect_changed(investor):
+def store_change_disconnect_state():
+    if len(source) > 0:
+        for investor in source['investors']:
+            index = source['investors'].index(investor)
+            if len(investors_disconnect_store[index]) == 0 or \
+                    investor['disconnect'] != investors_disconnect_store[index][-1]:
+                investors_disconnect_store[index].append(investor['disconnect'])
+
+
+def get_disconnect_change(investor):
     result = None
-    if investor['disconnect_previous'] != investor['disconnect']:
-        if investor['disconnect'] == 'Да':
+    idx = -1
+    for _ in source['investors']:
+        if _['login'] == investor['login']:
+            idx = source['investors'].index(_)
+    if idx > -1:
+        if investors_disconnect_store[idx][-1] == 'Да':
             result = 'Disabled'
-        else:
+        elif investors_disconnect_store[idx][-1] == 'Нет':
             result = 'Enabled'
-        investor['disconnect_previous'] = investor['disconnect'].copy()
+    if len(investors_disconnect_store[idx]) <= 1:
+        result = 'Unchanged'
+    # print(idx, investors_disconnect_store[idx], result)
     return result
 
 
-def disable_dcs(investors_list, investor):
-    # investor['dcs_access'] = False
+def disable_dcs(investor):
+    investor['dcs_access'] = False
+    investors_list = source['investors']
     if not send_messages:
         return
     investor_id = -1
@@ -289,7 +305,36 @@ def disable_dcs(investors_list, investor):
     numb = response[-1]['id']
     url = host + f'patch/{numb}/'
     name = "access" + id_shift
-    requests.patch(url=url, data={name: False})
+    params = {name: False}
+    requests.patch(url=url, data=params, timeout=10)
+
+
+def enable_dcs(investor):
+    investor['dcs_access'] = True
+    investors_list = source['investors']
+    if not send_messages:
+        return
+    investor_id = -1
+    for _ in investors_list:
+        if _['login'] == investor['login']:
+            investor_id = investors_list.index(_)
+            break
+    if investor_id < 0:
+        return
+    id_shift = '_' + str(investor_id + 1)
+    url = host + 'list'
+    response = requests.get(url).json()
+    numb = response[-1]['id']
+    url = host + f'patch/{numb}/'
+    name = "access" + id_shift
+    params = {name: True}
+    requests.patch(url=url, data=params, timeout=10)
+
+
+def access_starter(investor):
+    # print(investor['dcs_access'], get_disconnect_change(investor))
+    if not investor['dcs_access'] and get_disconnect_change(investor) == 'Enabled':
+        enable_dcs(investor)
 
 
 # async def set_comment(comment):
@@ -315,24 +360,21 @@ def set_comment(comment):
 
 
 def execute_conditions(investor):
-    # if investor['disconnect'] == 'Да' and is_disconnect_changed(investor):  # если отключился
-    #     pass
-
     if investor['blacklist'] == 'Да':  # если в блек листе
         force_close_all_positions(investor, reason='02')
-        disable_dcs(source['investors'], investor)
+        disable_dcs(investor)
     if investor['disconnect'] == 'Да':  # если отключиться
         set_comment('Инициатор отключения: ' + investor['shutdown_initiator'])
 
         if get_investors_positions_count(investor=investor, only_own=True) == 0:  # если нет открытых сделок
-            disable_dcs(source['investors'], investor)
+            disable_dcs(investor)
 
         if investor['open_trades_disconnect'] == 'Закрыть':  # если сделки закрыть
             force_close_all_positions(investor, reason='03')
-            disable_dcs(source['investors'], investor)
+            disable_dcs(investor)
 
         elif investor['accompany_transactions'] == 'Нет':  # если сделки оставить и не сопровождать
-            disable_dcs(source['investors'], investor)
+            disable_dcs(investor)
 
 
 def init_mt(init_data, need_login=False):
@@ -383,11 +425,13 @@ def get_lieder_pips_sl(position, price=None):
 
 def get_investor_positions(investor, only_own=True):
     """Количество открытых позиций"""
-    positions = None
+    positions = []
     if investor['login'] == source['investors'][0]['login']:
         positions = Mt_inv_1.positions_get()
     if investor['login'] == source['investors'][1]['login']:
         positions = Mt_inv_2.positions_get()
+    if not positions:
+        positions = []
     result = []
     if only_own:
         for _ in positions:
@@ -422,6 +466,8 @@ def is_lieder_position_in_investor_history(lieder_position, investor):
         deals = Mt_inv_1.history_deals_get(date_from, date_to)
     elif investor['login'] == source['investors'][1]['login']:
         deals = Mt_inv_2.history_deals_get(date_from, date_to)
+    if not deals:
+        deals = []
     result = None
     result_sl = None
     if len(deals) > 0:
@@ -447,7 +493,7 @@ def is_position_opened(lieder_position, investor):
         if not closed_by_sl:
             if investor['closed_deals_myself'] == 'Переоткрывать':
                 return False
-            elif investor['closed_deals_myself'] == 'Не переоткрывать' and is_disconnect_changed(investor) == 'Enabled':
+            elif investor['closed_deals_myself'] == 'Не переоткрывать' and get_disconnect_change(investor) == 'Enabled':
                 return False
         return True
     return False
@@ -473,6 +519,8 @@ def get_history_profit(investor):
         deals = Mt_inv_1.history_deals_get(date_from, date_to)
     elif investor['login'] == source['investors'][1]['login']:
         deals = Mt_inv_2.history_deals_get(date_from, date_to)
+    if not deals:
+        deals = []
     result = 0
     own_deals = []
     try:
@@ -529,9 +577,9 @@ def check_stop_limits(investor):
                         str(round(total_profit, 2)) + 'USD')
             for act_pos in active_positions:
                 if act_pos.magic == MAGIC:
-                    close_position(act_pos, '07')
+                    close_position(investor, act_pos, '07')
             if investor['open_trades'] == 'Закрыть и отключить':
-                disable_dcs(source['investors'], investor)
+                disable_dcs(investor)
 
 
 def get_time_offset(investor):
@@ -801,8 +849,6 @@ async def source_setup():
                 "open_trades": response['open_trades'],
                 "shutdown_initiator": response['shutdown_initiator'],
                 "disconnect": response['disconnect'],
-                'disconnect_previous': response['disconnect'],
-
                 "open_trades_disconnect": response['open_trades_disconnect'],
                 "notification": response['notification'],
                 "blacklist": response['blacklist'],
@@ -848,8 +894,6 @@ async def source_setup():
                 "open_trades": response['open_trades'],
                 "shutdown_initiator": response['shutdown_initiator'],
                 "disconnect": response['disconnect'],
-                'disconnect_previous': response['disconnect'],
-
                 "open_trades_disconnect": response['open_trades_disconnect'],
                 "notification": response['notification'],
                 "blacklist": response['blacklist'],
@@ -937,9 +981,13 @@ async def patching_connection_exchange():
 
 
 async def update_setup():
+    global investors_disconnect_store
     while True:
         await source_setup()
-        await asyncio.sleep(.1)
+        # if len(source) > 0:
+        # print('------------', source['investors'][0]['disconnect'], source['investors'][0]['dcs_access'], '--',
+        #       source['investors'][1]['disconnect'], source['investors'][1]['dcs_access'])
+        await asyncio.sleep(1)
 
 
 async def update_lieder_info(sleep=sleep_lieder_update):
@@ -955,6 +1003,7 @@ async def update_lieder_info(sleep=sleep_lieder_update):
             lieder_equity = Mt_lid.account_info().equity
             lieder_positions = Mt_lid.positions_get()
             Mt_lid.shutdown()
+            store_change_disconnect_state()  # сохранение Отключился в список
             print(f'\nLIEDER {source["lieder"]["login"]} - {len(lieder_positions)} positions :',
                   datetime.utcnow().replace(microsecond=0), ' dUTC:', UTC_OFFSET_TIMEDELTA,
                   ' Comments:', send_messages)
@@ -963,9 +1012,9 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
+    access_starter(investor)
     check_notification(investor)
     init_res = init_mt(init_data=investor)
-    login = investor.get("login")
     if not init_res:
         set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
