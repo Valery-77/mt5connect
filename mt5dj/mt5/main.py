@@ -315,13 +315,15 @@ def set_comment(comment):
 
 
 def execute_conditions(investor):
-    if investor['disconnect'] == 'Да' and is_disconnect_changed(investor):  # если отключился
-        set_comment('Инициатор отключения: ' + investor['shutdown_initiator'])
+    # if investor['disconnect'] == 'Да' and is_disconnect_changed(investor):  # если отключился
+    #     pass
 
     if investor['blacklist'] == 'Да':  # если в блек листе
         force_close_all_positions(investor, reason='02')
         disable_dcs(source['investors'], investor)
     if investor['disconnect'] == 'Да':  # если отключиться
+        set_comment('Инициатор отключения: ' + investor['shutdown_initiator'])
+
         if get_investors_positions_count(investor=investor, only_own=True) == 0:  # если нет открытых сделок
             disable_dcs(source['investors'], investor)
 
@@ -442,8 +444,11 @@ def is_position_opened(lieder_position, investor):
     exist_position, closed_by_sl = is_lieder_position_in_investor_history(lieder_position=lieder_position,
                                                                           investor=investor)
     if exist_position:
-        if investor['closed_deals_myself'] == 'Переоткрывать' and not closed_by_sl:
-            return False
+        if not closed_by_sl:
+            if investor['closed_deals_myself'] == 'Переоткрывать':
+                return False
+            elif investor['closed_deals_myself'] == 'Не переоткрывать' and is_disconnect_changed(investor) == 'Enabled':
+                return False
         return True
     return False
 
