@@ -1002,7 +1002,7 @@ async def execute_investor(investor):
         Mt_inv_2.shutdown()
 
 
-def get_new_volume(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого.
+def correct_volume(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого.
     try:
         if "Корректировать объем" in (investor["recovery_model"], investor["buy_hold_model"]):
             investors_balance = investor['investment_size']
@@ -1037,7 +1037,7 @@ async def task_manager():
         if len(source) > 0:
             for i, _ in enumerate(source['investors']):
                 event_loop.create_task(execute_investor(_))
-                get_new_volume(_)
+                correct_volume(_)
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
         await patching_connection_exchange()
