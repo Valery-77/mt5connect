@@ -106,6 +106,8 @@ class DealComment:
         if len(string) > 0:
             sliced = string.split('|')
             if len(sliced) == 2:
+                if sliced[1] not in reasons_code:
+                    return False
                 try:
                     ticket = int(sliced[0])
                     if ticket < 0:
@@ -270,8 +272,8 @@ def is_disconnect_changed(investor):
 
 
 def disable_dcs(investors_list, investor):
-    investor['dcs_access'] = False
-    if send_messages:
+    # investor['dcs_access'] = False
+    if not send_messages:
         return
     investor_id = -1
     for _ in investors_list:
@@ -280,15 +282,27 @@ def disable_dcs(investors_list, investor):
             break
     if investor_id < 0:
         return
-    id_shift = '_' + str(investor_id)
+    id_shift = '_' + str(investor_id + 1)
     url = host + 'list'
     response = requests.get(url).json()
     numb = response[-1]['id']
     url = host + f'patch/{numb}/'
     name = "access" + id_shift
-    requests.patch(url=url, data={name: False})
+    res = requests.patch(url=url, data={name: False})
 
 
+# async def set_comment(comment):
+#     if not send_messages:
+#         return
+#     async with aiohttp.ClientSession() as session:
+#         url = host + 'list'
+#         response = requests.get(url).json()
+#         numb = response[-1]['id']
+#         url = host + f'patch/{numb}/'
+#         # print('   ---   ', comment)
+#         async with session.patch(url=url, data={"comment": comment}) as resp:
+#             await resp.text()
+#     # requests.patch(url=url, data={"comment": comment})
 def set_comment(comment):
     if not send_messages:
         return
@@ -296,8 +310,7 @@ def set_comment(comment):
     response = requests.get(url).json()
     numb = response[-1]['id']
     url = host + f'patch/{numb}/'
-    # print('   ---   ', comment)
-    requests.patch(url=url, data={"comment": comment})
+    requests.patch(url=url, data={"comment": comment}, timeout=10)
 
 
 def execute_conditions(investor):
@@ -382,28 +395,41 @@ def is_position_exist_in_list(lieder_position, invest_positions):
 
 def is_position_exist_in_history(lieder_position):
     date_from = start_date  # datetime(2023, 2, 18, 1, 10)
-    date_to = datetime.today().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA
+    date_to = datetime.today().replace(microsecond=0) + timedelta(days=1)  # UTC_OFFSET_TIMEDELTA
     history_deals = Mt.history_deals_get(date_from, date_to)
 
     # print('--', date_from, '-', lieder_position.ticket)
     # for _ in history_deals:
     #     print(history_deals.index(_), datetime.fromtimestamp(_.time), _.comment)
 
+    result = None
+    result_sl = None
     if len(history_deals) > 0:
         for pos in history_deals:
-            if pos.magic == MAGIC and DealComment.is_valid_string(pos.comment):
+            if DealComment.is_valid_string(pos.comment):
                 comment = DealComment().set_from_string(pos.comment)
                 if lieder_position.ticket == comment.lieder_ticket:
-                    return True
-    return False
+                    result = pos
+                    if comment.reason == '07':
+                        result_sl = pos
+            if result and result_sl:
+                break
+    # for _ in history_deals:
+    #     print(_)
+    # print(result)
+    # print(result_sl)
+    # exit()
+
+    return result, result_sl
 
 
 def is_position_opened(lieder_position, investor):
     """Проверка позиции лидера на наличие в списке позиций и истории инвестора"""
     if is_position_exist_in_list(lieder_position=lieder_position, invest_positions=Mt.positions_get()):
         return True
-    if is_position_exist_in_history(lieder_position=lieder_position):
-        if investor['closed_deals_myself'] == 'Переоткрывать':
+    exist_position, closed_by_sl = is_position_exist_in_history(lieder_position=lieder_position)
+    if exist_position:
+        if investor['closed_deals_myself'] == 'Переоткрывать' and not closed_by_sl:
             return False
         return True
     return False
@@ -492,11 +518,11 @@ def check_stop_limits(investor):
         elif fabs(total_profit) >= limit_size:
             close_positions = True
         # CLOSE ALL POSITIONS
-        if close_positions:
+        active_positions = Mt.positions_get()
+        if close_positions and len(active_positions) > 0:
             print('     Закрытие всех позиций по условию стоп-лосс')
             set_comment('Закрытие всех позиций по условию стоп-лосс. Убыток торговли c' + str(start_date) + ':' +
                         str(round(total_profit, 2)) + 'USD')
-            active_positions = Mt.positions_get()
             for act_pos in active_positions:
                 if act_pos.magic == MAGIC:
                     close_position(act_pos, '07')
@@ -524,6 +550,7 @@ def check_transaction(investor, lieder_position):
         delta_time = curr_time - deal_time
         # print('=========', datetime.fromtimestamp(deal_time), datetime.fromtimestamp(curr_time), delta_time, timeout)
         if delta_time > timeout:  # если время больше заданного
+            print('Время истекло')
             return False
 
     transaction_type = 0
@@ -682,16 +709,17 @@ def force_close_all_positions(investor, reason):
 def close_positions_by_lieder(positions_lieder, positions_investor):
     """Закрытие позиций инвестора, которые закрылись у лидера"""
     non_existed_positions = []
-    for ip in positions_investor:
-        position_exist = False
-        for lp in positions_lieder:
-            if DealComment.is_valid_string(ip.comment):
-                comment = DealComment().set_from_string(ip.comment)
-                if comment.lieder_ticket == lp.ticket:
-                    position_exist = True
-                    break
-        if not position_exist:
-            non_existed_positions.append(ip)
+    if positions_investor:
+        for ip in positions_investor:
+            position_exist = False
+            for lp in positions_lieder:
+                if DealComment.is_valid_string(ip.comment):
+                    comment = DealComment().set_from_string(ip.comment)
+                    if comment.lieder_ticket == lp.ticket:
+                        position_exist = True
+                        break
+            if not position_exist:
+                non_existed_positions.append(ip)
     for pos in non_existed_positions:
         print('     close position:', pos.comment)
         close_position(pos, reason='06')
@@ -771,7 +799,6 @@ async def source_setup():
                 'server': response['investor_two_server'],
                 'investment_size': float(response['investment_two_size']),
                 'dcs_access': response['access_2'],
-                'dcs_access_previous': response['access_2'],
 
                 "deal_in_plus": float(response['deal_in_plus']),
                 "deal_in_minus": float(response['deal_in_minus']),
@@ -821,6 +848,10 @@ async def source_setup():
         }
         prev_date = main_source['settings']['created_at'].split('.')
         start_date = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S")
+        # if len(source) > 0:
+        #     print('==========   ', response['access_1'], source['investors'][0]['dcs_access'], ' // ',
+        #           response['access_2'],
+        #           source['investors'][1]['dcs_access'])
     source = main_source.copy()
 
 
@@ -907,6 +938,8 @@ async def execute_investor(investor):
     if investor['dcs_access']:
         execute_conditions(investor=investor)  # проверка условий кейса закрытия
     if investor['dcs_access']:
+        check_stop_limits(investor=investor)  # проверка условий стоп-лосс
+    if investor['dcs_access']:
         for pos_lid in lieder_positions:
             inv_tp = get_pips_tp(pos_lid)
             inv_sl = get_pips_sl(pos_lid)
@@ -925,11 +958,8 @@ async def execute_investor(investor):
                     if ret_code != 10009:  # Заявка выполнена
                         set_comment('\t' + msg)
                     print(msg)
-            else:
-                set_comment('Не выполнено условие +/-')
-        check_stop_limits(investor=investor)  # проверка условий стоп-лосс
-    else:
-        print('ACCESS DISABLED')
+            # else:
+            #     set_comment('Не выполнено условие +/-')
     # закрытие позиций от лидера
     if investor['dcs_access'] or \
             (not investor['dcs_access'] and investor[
