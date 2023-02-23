@@ -288,7 +288,7 @@ def disable_dcs(investors_list, investor):
     numb = response[-1]['id']
     url = host + f'patch/{numb}/'
     name = "access" + id_shift
-    res = requests.patch(url=url, data={name: False})
+    requests.patch(url=url, data={name: False})
 
 
 # async def set_comment(comment):
@@ -579,8 +579,6 @@ def check_transaction(investor, lieder_position):
 
 def get_deal_volume(investor, lieder_position, lieder_balance_value):
     """Расчет множителя"""
-    if investor['changing_multiplier'] == 'Нет':
-        return 1.0
     symbol = lieder_position.symbol
     lieder_volume = lieder_position.volume
     multiplier = investor['multiplier_value']
@@ -595,7 +593,11 @@ def get_deal_volume(investor, lieder_position, lieder_balance_value):
         decimals = str(min_lot)[::-1].find('.')
     except AttributeError:
         decimals = 2
-    return round(lieder_volume * multiplier * ext_k, decimals)
+    if investor['changing_multiplier'] == 'Нет':
+        result = round(lieder_volume * ext_k, decimals)
+    else:
+        result = round(lieder_volume * multiplier * ext_k, decimals)
+    return result
 
 
 def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, sl=0.0):
