@@ -380,7 +380,7 @@ def get_lieder_pips_sl(position, price=None):
     return result
 
 
-def get_investors_positions(investor, only_own=True):
+def get_investor_positions(investor, only_own=True):
     """Количество открытых позиций"""
     positions = None
     if investor['login'] == source['investors'][0]['login']:
@@ -399,11 +399,11 @@ def get_investors_positions(investor, only_own=True):
 
 def get_investors_positions_count(investor, only_own=True):
     """Количество открытых позиций"""
-    return len(get_investors_positions(investor)) if only_own else len(get_investors_positions(investor, False))
+    return len(get_investor_positions(investor)) if only_own else len(get_investor_positions(investor, False))
 
 
 def is_lieder_position_in_investor(lieder_position, investor):
-    invest_positions = get_investors_positions(investor=investor, only_own=False)
+    invest_positions = get_investor_positions(investor=investor, only_own=False)
     if len(invest_positions) > 0:
         for pos in invest_positions:
             if DealComment.is_valid_string(pos.comment):
@@ -416,15 +416,15 @@ def is_lieder_position_in_investor(lieder_position, investor):
 def is_lieder_position_in_investor_history(lieder_position, investor):
     date_from = start_date
     date_to = datetime.today().replace(microsecond=0) + timedelta(days=1)
-    positions = []
+    deals = []
     if investor['login'] == source['investors'][0]['login']:
-        positions = Mt_inv_1.history_deals_get()
-    if investor['login'] == source['investors'][1]['login']:
-        positions = Mt_inv_2.history_deals_get()
+        deals = Mt_inv_1.history_deals_get(date_from, date_to)
+    elif investor['login'] == source['investors'][1]['login']:
+        deals = Mt_inv_2.history_deals_get(date_from, date_to)
     result = None
     result_sl = None
-    if len(positions) > 0:
-        for pos in positions:
+    if len(deals) > 0:
+        for pos in deals:
             if DealComment.is_valid_string(pos.comment):
                 comment = DealComment().set_from_string(pos.comment)
                 if lieder_position.ticket == comment.lieder_ticket:
@@ -438,9 +438,10 @@ def is_lieder_position_in_investor_history(lieder_position, investor):
 
 def is_position_opened(lieder_position, investor):
     """Проверка позиции лидера на наличие в списке позиций и истории инвестора"""
-    if is_lieder_position_in_investor(lieder_position=lieder_position, invest_positions=Mt_lid.positions_get()):
+    if is_lieder_position_in_investor(lieder_position=lieder_position, investor=investor):
         return True
-    exist_position, closed_by_sl = is_lieder_position_in_investor_history(lieder_position=lieder_position)
+    exist_position, closed_by_sl = is_lieder_position_in_investor_history(lieder_position=lieder_position,
+                                                                          investor=investor)
     if exist_position:
         if investor['closed_deals_myself'] == 'Переоткрывать' and not closed_by_sl:
             return False
@@ -448,53 +449,41 @@ def is_position_opened(lieder_position, investor):
     return False
 
 
-def get_positions_profit():
+def get_positions_profit(investor):
     """Расчет прибыли текущих позиций"""
-    active_positions = Mt_lid.positions_get()
-
-    # print('>>> ACTV: ')
-    # for _ in active_positions:
-    #     print(active_positions.index(_), datetime.fromtimestamp(_.time), _.profit)
-
+    positions = get_investor_positions(investor=investor, only_own=True)
     result = 0
-    own_positions = []
-    try:
-        if len(active_positions) > 0:
-            for pos in active_positions:
-                if pos.magic == MAGIC:
-                    own_positions.append(pos)
-        if len(own_positions) > 0:
-            for pos in own_positions:
-                if pos.type < 2:
-                    result += pos.profit  # + pos.commission
-    except AttributeError:
-        print('ERROR in get_positions_profit() : wrong positions list')
-        result = None
+    if len(positions) > 0:
+        for pos in positions:
+            if pos.type < 2:
+                result += pos.profit  # + pos.commission
     return result
 
 
-def get_history_profit():
+def get_history_profit(investor):
     """Расчет прибыли по истории"""
     date_from = start_date
-    date_to = datetime.now().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA
-
-    history_deals = Mt_lid.history_deals_get(date_from, date_to)
-
-    # print('>>> HIST: ', date_from, ' - ', date_to)
-    # for _ in history_deals:
-    #     print(history_deals.index(_), datetime.fromtimestamp(_.time), _.profit)
-
+    date_to = datetime.today().replace(microsecond=0) + timedelta(days=1)
+    deals = []
+    if investor['login'] == source['investors'][0]['login']:
+        deals = Mt_inv_1.history_deals_get(date_from, date_to)
+    elif investor['login'] == source['investors'][1]['login']:
+        deals = Mt_inv_2.history_deals_get(date_from, date_to)
     result = 0
-    own_positions = []
+    own_deals = []
     try:
-        if len(history_deals) > 0:
-            for pos in history_deals:
-                if pos.magic == MAGIC and DealComment.is_valid_string(pos.comment):
-                    linked_pos = Mt_lid.history_deals_get(position=pos.position_id)
+        if len(deals) > 0:
+            for pos in deals:
+                if DealComment.is_valid_string(pos.comment):
+                    linked_pos = []
+                    if investor['login'] == source['investors'][0]['login']:
+                        linked_pos = Mt_inv_1.history_deals_get(position=pos.position_id)
+                    elif investor['login'] == source['investors'][1]['login']:
+                        linked_pos = Mt_inv_2.history_deals_get(position=pos.position_id)
                     for lp in linked_pos:
-                        own_positions.append(lp)
-        if len(own_positions) > 0:
-            for pos in own_positions:
+                        own_deals.append(lp)
+        if len(own_deals) > 0:
+            for pos in own_deals:
                 if pos.type < 2:
                     result += pos.profit  # + pos.commission
     except Exception as ex:
@@ -510,15 +499,13 @@ def check_stop_limits(investor):
         start_balance = 1
     limit_size = investor['stop_value']
     calc_limit_in_percent = True if investor['stop_loss'] == 'Процент' else False
-    history_profit = get_history_profit()
-    current_profit = get_positions_profit()
+    history_profit = get_history_profit(investor=investor)
+    current_profit = get_positions_profit(investor=investor)
     # SUMM TOTAL PROFIT
     if history_profit is None or current_profit is None:
         return
     close_positions = False
     total_profit = history_profit + current_profit
-
-    # print(f'total_profit = history_profit + current_profit  ->  {total_profit} = {history_profit} + {current_profit}')
 
     print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date - UTC_OFFSET_TIMEDELTA,
           ':', round(total_profit, 2), 'USD')
@@ -531,7 +518,7 @@ def check_stop_limits(investor):
         elif fabs(total_profit) >= limit_size:
             close_positions = True
         # CLOSE ALL POSITIONS
-        active_positions = Mt_lid.positions_get()
+        active_positions = get_investor_positions(investor=investor)
         if close_positions and len(active_positions) > 0:
             print('     Закрытие всех позиций по условию стоп-лосс')
             set_comment('Закрытие всех позиций по условию стоп-лосс. Убыток торговли c' + str(start_date) + ':' +
@@ -543,14 +530,19 @@ def check_stop_limits(investor):
                 disable_dcs(source['investors'], investor)
 
 
-def get_time_offset():
-    rates = Mt_lid.copy_rates_from_pos('EURUSD', Mt_lid.TIMEFRAME_M1, 0, 1)
-    server_time = datetime.fromtimestamp(rates[0][0])
-    current_time = datetime.now().replace(microsecond=0)
-    delta = server_time.hour - current_time.hour
-    return delta * 3600
-    # print(server_time.hour, current_time.hour, delta*3600)
-    # exit()
+def get_time_offset(investor):
+    symbol = 'EURUSD'
+    rates = None
+    if investor['login'] == source['investors'][0]['login']:
+        rates = Mt_inv_1.copy_rates_from_pos(symbol, Mt_inv_1.TIMEFRAME_M1, 0, 1)
+    elif investor['login'] == source['investors'][1]['login']:
+        rates = Mt_inv_1.copy_rates_from_pos(symbol, Mt_inv_1.TIMEFRAME_M1, 0, 1)
+    if rates:
+        server_time = datetime.fromtimestamp(rates[0][0])
+        current_time = datetime.now().replace(microsecond=0)
+        delta = server_time.hour - current_time.hour
+        return delta * 3600
+    return None
 
 
 def check_transaction(investor, lieder_position):
@@ -558,12 +550,11 @@ def check_transaction(investor, lieder_position):
     price_refund = True if investor['price_refund'] == 'Да' else False
     if not price_refund:  # если не возврат цены
         timeout = investor['waiting_time'] * 60
-        deal_time = int(lieder_position.time_update - get_time_offset())
+        deal_time = int(lieder_position.time_update - get_time_offset(investor))
         curr_time = int(datetime.timestamp(datetime.now().replace(microsecond=0)))
         delta_time = curr_time - deal_time
-        # print('=========', datetime.fromtimestamp(deal_time), datetime.fromtimestamp(curr_time), delta_time, timeout)
         if delta_time > timeout:  # если время больше заданного
-            print('Время истекло')
+            # print('Время истекло')
             return False
 
     transaction_type = 0
@@ -598,11 +589,15 @@ def get_deal_volume(investor, lieder_position, lieder_balance_value):
     investment_size = investor['investment_size']
     get_for_balance = True if investor['multiplier'] == 'Баланс' else False
     if get_for_balance:
-        ext_k = (investment_size + get_history_profit()) / lieder_balance_value
+        ext_k = (investment_size + get_history_profit(investor)) / lieder_balance_value
     else:
-        ext_k = (investment_size + get_history_profit() + get_positions_profit()) / lieder_balance_value
+        ext_k = (investment_size + get_history_profit(investor) + get_positions_profit(investor)) / lieder_balance_value
     try:
-        min_lot = Mt_lid.symbol_info(symbol).volume_min
+        min_lot = None
+        if investor['login'] == source['investors'][0]['login']:
+            min_lot = Mt_inv_1.symbol_info(symbol).volume_min
+        if investor['login'] == source['investors'][1]['login']:
+            min_lot = Mt_inv_2.symbol_info(symbol).volume_min
         decimals = str(min_lot)[::-1].find('.')
     except AttributeError:
         decimals = 2
@@ -615,19 +610,25 @@ def get_deal_volume(investor, lieder_position, lieder_balance_value):
 
 def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, sl=0.0):
     """Открытие позиции"""
+    Mt = None
+    if investor['login'] == source['investors'][0]['login']:
+        Mt = Mt_inv_1
+    if investor['login'] == source['investors'][1]['login']:
+        Mt = Mt_inv_2
+
     try:
-        point = Mt_lid.symbol_info(symbol).point
+        point = Mt.symbol_info(symbol).point
         price = tp_in = sl_in = 0.0
         if deal_type == 0:  # BUY
-            deal_type = Mt_lid.ORDER_TYPE_BUY
-            price = Mt_lid.symbol_info_tick(symbol).ask
+            deal_type = Mt.ORDER_TYPE_BUY
+            price = Mt.symbol_info_tick(symbol).ask
         if tp != 0:
             tp_in = price + tp * point
         if sl != 0:
             sl_in = price - sl * point
         elif deal_type == 1:  # SELL
-            deal_type = Mt_lid.ORDER_TYPE_SELL
-            price = Mt_lid.symbol_info_tick(symbol).bid
+            deal_type = Mt.ORDER_TYPE_SELL
+            price = Mt.symbol_info_tick(symbol).bid
             if tp != 0:
                 tp_in = price - tp * point
             if sl != 0:
@@ -638,7 +639,7 @@ def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, 
     comment.lieder_ticket = sender_ticket
     comment.reason = '01'
     request = {
-        "action": Mt_lid.TRADE_ACTION_DEAL,
+        "action": Mt.TRADE_ACTION_DEAL,
         "symbol": symbol,
         "volume": lot,
         "type": deal_type,
@@ -648,12 +649,12 @@ def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, 
         "deviation": DEVIATION,
         "magic": MAGIC,
         "comment": comment.string(),
-        "type_time": Mt_lid.ORDER_TIME_GTC,
-        "type_filling": Mt_lid.ORDER_FILLING_RETURN,
+        "type_time": Mt.ORDER_TIME_GTC,
+        "type_filling": Mt.ORDER_FILLING_RETURN,
     }
     checked_request = edit_volume(investor, request)  # Проверка и расчет объема при недостатке маржи
     if checked_request:
-        result = Mt_lid.order_send(checked_request)
+        result = Mt.order_send(checked_request)
         return result
     else:
         return {'retcode': -100}
@@ -661,22 +662,28 @@ def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, 
 
 def edit_volume(investor, request):
     """Расчет объема при недостатке маржи и проверка на максимальный"""
-    response = Mt_lid.order_check(request)
+    mt = None
+    if investor['login'] == source['investors'][0]['login']:
+        mt = Mt_inv_1
+    if investor['login'] == source['investors'][1]['login']:
+        mt = Mt_inv_2
+
+    response = mt.order_check(request)
     if response.retcode == 10014:  # Неправильный объем
-        max_vol = Mt_lid.symbol_info(request['symbol']).volume_max
+        max_vol = mt.symbol_info(request['symbol']).volume_max
         if request['volume'] > max_vol:
             set_comment('Объем сделки больше максимального')
             request = None
     elif response.retcode == 10019:  # Нет достаточных денежных средств для выполнения запроса
         if source['investors']['not_enough_margin'] == 'Минимальный объем':
-            request['volume'] = Mt_lid.symbol_info(request['symbol']).volume_min
+            request['volume'] = mt.symbol_info(request['symbol']).volume_min
         elif source['investors']['not_enough_margin'] == 'Достаточный объем':
             symbol = request['symbol']
-            contract_specification = Mt_lid.symbol_info(symbol).contract_size
-            price = Mt_lid.symbol_info_tick(symbol).bid
+            contract_specification = mt.symbol_info(symbol).contract_size
+            price = mt.symbol_info_tick(symbol).bid
             lot_price = contract_specification * price
-            balance = investor['investment_size'] + get_history_profit() + get_positions_profit()
-            min_lot = Mt_lid.symbol_info(request.symbol).volume_min
+            balance = investor['investment_size'] + get_history_profit(investor) + get_positions_profit(investor)
+            min_lot = mt.symbol_info(request.symbol).volume_min
             decimals = str(min_lot)[::-1].find('.')
             request['volume'] = round(balance / lot_price, decimals)
         elif source['investors']['not_enough_margin'] == 'Не открывать':
@@ -684,28 +691,34 @@ def edit_volume(investor, request):
     return request
 
 
-def close_position(position, reason):
+def close_position(investor, position, reason):
     """Закрытие указанной позиции"""
-    tick = Mt_lid.symbol_info_tick(position.symbol)
+    mt = None
+    if investor['login'] == source['investors'][0]['login']:
+        mt = Mt_inv_1
+    if investor['login'] == source['investors'][1]['login']:
+        mt = Mt_inv_2
+
+    tick = mt.symbol_info_tick(position.symbol)
     new_comment_str = position.comment
     if DealComment.is_valid_string(position.comment):
         comment = DealComment().set_from_string(position.comment)
         comment.reason = reason
         new_comment_str = comment.string()
     request = {
-        'action': Mt_lid.TRADE_ACTION_DEAL,
+        'action': mt.TRADE_ACTION_DEAL,
         'position': position.ticket,
         'symbol': position.symbol,
         'volume': position.volume,
-        'type': Mt_lid.ORDER_TYPE_BUY if position.type == 1 else Mt_lid.ORDER_TYPE_SELL,
+        'type': mt.ORDER_TYPE_BUY if position.type == 1 else mt.ORDER_TYPE_SELL,
         'price': tick.ask if position.type == 1 else tick.bid,
         'deviation': DEVIATION,
         'magic:': MAGIC,
-        'comment': new_comment_str,  # 'CLOSED_BY_EXPERT',
-        'type_tim': Mt_lid.ORDER_TIME_GTC,
-        'type_filing': Mt_lid.ORDER_FILLING_IOC
+        'comment': new_comment_str,
+        'type_tim': mt.ORDER_TIME_GTC,
+        'type_filing': mt.ORDER_FILLING_IOC
     }
-    result = Mt_lid.order_send(request)
+    result = mt.order_send(request)
     return result
 
 
@@ -713,31 +726,34 @@ def force_close_all_positions(investor, reason):
     """Принудительное закрытие всех позиций аккаунта"""
     init_res = init_mt(init_data=investor)
     if init_res:
-        positions = Mt_lid.positions_get()
+        positions = get_investor_positions(investor, only_own=False)
         if len(positions) > 0:
             for position in positions:
                 if position.magic == MAGIC and DealComment.is_valid_string(position.comment):
-                    close_position(position, reason=reason)
-        Mt_lid.shutdown()
+                    close_position(investor, position, reason=reason)
+        if investor['login'] == source['investors'][0]['login']:
+            Mt_inv_1.shutdown()
+        if investor['login'] == source['investors'][1]['login']:
+            Mt_inv_2.shutdown()
 
 
-def close_positions_by_lieder(positions_lieder, positions_investor):
+def close_positions_by_lieder(positions_lieder, investor):
     """Закрытие позиций инвестора, которые закрылись у лидера"""
+    positions_investor = get_investor_positions(investor)
     non_existed_positions = []
     if positions_investor:
         for ip in positions_investor:
             position_exist = False
             for lp in positions_lieder:
-                if DealComment.is_valid_string(ip.comment):
-                    comment = DealComment().set_from_string(ip.comment)
-                    if comment.lieder_ticket == lp.ticket:
-                        position_exist = True
-                        break
+                comment = DealComment().set_from_string(ip.comment)
+                if comment.lieder_ticket == lp.ticket:
+                    position_exist = True
+                    break
             if not position_exist:
                 non_existed_positions.append(ip)
     for pos in non_existed_positions:
         print('     close position:', pos.comment)
-        close_position(pos, reason='06')
+        close_position(investor, pos, reason='06')
 
 
 async def source_setup():
@@ -979,9 +995,11 @@ async def execute_investor(investor):
     if investor['dcs_access'] or \
             (not investor['dcs_access'] and investor[
                 'accompany_transactions'] == 'Да'):  # если сопровождать сделки или доступ есть
-        close_positions_by_lieder(positions_lieder=lieder_positions,
-                                  positions_investor=Mt_lid.positions_get())
-    Mt_lid.shutdown()
+        close_positions_by_lieder(positions_lieder=lieder_positions, investor=investor)
+    if investor['login'] == source['investors'][0]['login']:
+        Mt_inv_1.shutdown()
+    if investor['login'] == source['investors'][1]['login']:
+        Mt_inv_2.shutdown()
 
 
 async def correcting_lots(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого. Зачем асинхрон?
@@ -1039,4 +1057,3 @@ if __name__ == '__main__':
     event_loop.create_task(update_lieder_info())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
-    Mt_lid.shutdown()
