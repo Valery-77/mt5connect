@@ -157,7 +157,6 @@ UTC_OFFSET_TIMEDELTA = datetime.now() - datetime.utcnow()
 lieder_balance = 0  # default var
 lieder_equity = 0  # default var
 lieder_positions = []  # default var
-investor_positions = {}  # default var
 old_investors_balance = {}
 start_date = datetime.now().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA  # default var
 trading_event = asyncio.Event()  # init async event
@@ -906,7 +905,7 @@ async def patching_quotes():
                                  indent=1,
                                  cls=DjangoJSONEncoder)
             headers = {'Content-Type': 'application/json'}
-            patch_url = f'http://127.0.0.1:8000/exchange/update/{i}/'
+            patch_url = host + f'update/{i}/'
             requests.request("PATCH", patch_url, headers=headers, data=payload)
         except Exception as e:
             print("Exception in patching_quotes:", e)
@@ -959,11 +958,9 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
-    global investor_positions
     check_notification(investor)
     init_res = init_mt(init_data=investor)
     login = investor.get("login")
-    investor_positions[f"investor{login}"] = Mt.positions_get()
     if not init_res:
         set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
@@ -1009,7 +1006,7 @@ def get_new_volume(investor):  # Нужно считать для одного �
     try:
         if "Корректировать объем" in (investor["recovery_model"], investor["buy_hold_model"]):
             investors_balance = investor['investment_size']
-            global old_investors_balance, investor_positions
+            global old_investors_balance
             login = investor.get("login")
             if not old_investors_balance[login]:
                 old_investors_balance[login] = investors_balance
@@ -1017,6 +1014,7 @@ def get_new_volume(investor):  # Нужно считать для одного �
                 lots_qoef = investors_balance / old_investors_balance[login]
                 new_volumes = []
                 if lots_qoef != 1.0:
+                    investor_positions = get_investor_positions(investor=investor, only_own=False)
                     for pos in list(investor_positions.keys()):
                         investor_pos = investor_positions.get(pos)
                         volume = investor_pos.volume
@@ -1033,7 +1031,6 @@ async def task_manager():
         if len(source) > 0:
             for i, _ in enumerate(source['investors']):
                 event_loop.create_task(execute_investor(_))
-                get_new_volume(_)
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
         await patching_connection_exchange()
