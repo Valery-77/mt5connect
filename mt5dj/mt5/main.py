@@ -189,9 +189,9 @@ source = {
 #         print(f'Невозможно подключиться к терминалу : {datetime.now()}')
 #         exit()
 
-def check_notification(investor):
+async def check_notification(investor):
     if investor['notification'] == 'Да':
-        set_comment('Вы должны оплатить вознаграждение')
+        await set_comment('Вы должны оплатить вознаграждение')
 
 
 def set_dummy_data():
@@ -290,94 +290,84 @@ def get_disconnect_change(investor):
     return result
 
 
-def disable_dcs(investor):
-    investor['dcs_access'] = False
-    investors_list = source['investors']
+async def disable_dcs(investor):
     if not send_messages:
         return
-    investor_id = -1
-    for _ in investors_list:
-        if _['login'] == investor['login']:
-            investor_id = investors_list.index(_)
-            break
-    if investor_id < 0:
-        return
-    id_shift = '_' + str(investor_id + 1)
-    url = host + 'list'
-    response = requests.get(url).json()
-    numb = response[-1]['id']
-    url = host + f'patch/{numb}/'
-    name = "access" + id_shift
-    params = {name: False}
-    requests.patch(url=url, data=params, timeout=10)
+    async with aiohttp.ClientSession() as session:
+        investor_id = -1
+        for _ in source['investors']:
+            if _['login'] == investor['login']:
+                investor_id = source['investors'].index(_)
+                break
+        if investor_id < 0:
+            return
+        id_shift = '_' + str(investor_id + 1)
+        url = host + 'last'
+        response = requests.get(url).json()[0]
+        numb = response['id']
+        url = host + f'patch/{numb}/'
+        name = "access" + id_shift
+        async with session.patch(url=url, data={name: False}) as resp:
+            await resp.json()
 
 
-def enable_dcs(investor):
-    investor['dcs_access'] = True
-    investors_list = source['investors']
+async def enable_dcs(investor):
     if not send_messages:
         return
-    investor_id = -1
-    for _ in investors_list:
-        if _['login'] == investor['login']:
-            investor_id = investors_list.index(_)
-            break
-    if investor_id < 0:
-        return
-    id_shift = '_' + str(investor_id + 1)
-    url = host + 'list'
-    response = requests.get(url).json()
-    numb = response[-1]['id']
-    url = host + f'patch/{numb}/'
-    name = "access" + id_shift
-    params = {name: True}
-    requests.patch(url=url, data=params, timeout=10)
+    async with aiohttp.ClientSession() as session:
+        investor_id = -1
+        for _ in source['investors']:
+            if _['login'] == investor['login']:
+                investor_id = source['investors'].index(_)
+                break
+        if investor_id < 0:
+            return
+        id_shift = '_' + str(investor_id + 1)
+        url = host + 'last'
+        response = requests.get(url).json()[0]
+        numb = response['id']
+        url = host + f'patch/{numb}/'
+        name = "access" + id_shift
+        async with session.patch(url=url, data={name: True}) as resp:
+            await resp.json()
 
 
-def access_starter(investor):
+async def access_starter(investor):
     # print(investor['dcs_access'], get_disconnect_change(investor))
     if not investor['dcs_access'] and get_disconnect_change(investor) == 'Enabled':
-        enable_dcs(investor)
+        await enable_dcs(investor)
 
 
-# async def set_comment(comment):
-#     if not send_messages:
-#         return
-#     async with aiohttp.ClientSession() as session:
-#         url = host + 'list'
-#         response = requests.get(url).json()
-#         numb = response[-1]['id']
-#         url = host + f'patch/{numb}/'
-#         # print('   ---   ', comment)
-#         async with session.patch(url=url, data={"comment": comment}) as resp:
-#             await resp.text()
-#     # requests.patch(url=url, data={"comment": comment})
-def set_comment(comment):
+async def set_comment(comment):
     if not send_messages:
         return
-    url = host + 'list'
-    response = requests.get(url).json()
-    numb = response[-1]['id']
-    url = host + f'patch/{numb}/'
-    requests.patch(url=url, data={"comment": comment}, timeout=10)
+    if not comment or comment == 'None':
+        return
+    async with aiohttp.ClientSession() as session:
+        url = host + 'last'
+        response = requests.get(url).json()[0]
+        numb = response['id']
+        url = host + f'patch/{numb}/'
+        async with session.patch(url=url, data={"comment": comment}) as resp:
+            await resp.json()
 
 
-def execute_conditions(investor):
+async def execute_conditions(investor):
     if investor['blacklist'] == 'Да':  # если в блек листе
         force_close_all_positions(investor, reason='02')
-        disable_dcs(investor)
+        await disable_dcs(investor)
     if investor['disconnect'] == 'Да':  # если отключиться
-        set_comment('Инициатор отключения: ' + investor['shutdown_initiator'])
+        await set_comment('Инициатор отключения: ' + investor['shutdown_initiator'])
 
         if get_investors_positions_count(investor=investor, only_own=True) == 0:  # если нет открытых сделок
-            disable_dcs(investor)
+            await disable_dcs(investor)
 
         if investor['open_trades_disconnect'] == 'Закрыть':  # если сделки закрыть
             force_close_all_positions(investor, reason='03')
-            disable_dcs(investor)
+            await disable_dcs(investor)
 
         elif investor['accompany_transactions'] == 'Нет':  # если сделки оставить и не сопровождать
-            disable_dcs(investor)
+            await disable_dcs(investor)
 
 
 def init_mt(init_data, need_login=False):
@@ -428,20 +418,21 @@ def get_lieder_pips_sl(position, price=None):
 
 def get_investor_positions(investor, only_own=True):
     """Количество открытых позиций"""
-    positions = []
-    if investor['login'] == source['investors'][0]['login']:
-        positions = Mt_inv_1.positions_get()
-    if investor['login'] == source['investors'][1]['login']:
-        positions = Mt_inv_2.positions_get()
-    if not positions:
-        positions = []
     result = []
-    if only_own:
-        for _ in positions:
-            if DealComment.is_valid_string(_.comment):
-                result.append(_)
-    else:
-        result = positions
+    if len(source) > 0:
+        positions = []
+        if investor['login'] == source['investors'][0]['login']:
+            positions = Mt_inv_1.positions_get()
+        if investor['login'] == source['investors'][1]['login']:
+            positions = Mt_inv_2.positions_get()
+        if not positions:
+            positions = []
+        if only_own:
+            for _ in positions:
+                if DealComment.is_valid_string(_.comment):
+                    result.append(_)
+        else:
+            result = positions
     return result
 
 
@@ -547,7 +538,7 @@ def get_history_profit(investor):
     return result
 
 
-def check_stop_limits(investor):
+async def check_stop_limits(investor):
     """Проверка стоп-лимита по проценту либо абсолютному показателю"""
     start_balance = investor['investment_size']
     if start_balance <= 0:
@@ -576,13 +567,13 @@ def check_stop_limits(investor):
         active_positions = get_investor_positions(investor=investor)
         if close_positions and len(active_positions) > 0:
             print('     Закрытие всех позиций по условию стоп-лосс')
-            set_comment('Закрытие всех позиций по условию стоп-лосс. Убыток торговли c' + str(start_date) + ':' +
-                        str(round(total_profit, 2)) + 'USD')
+            await set_comment('Закрытие всех позиций по условию стоп-лосс. Убыток торговли c' + str(start_date) + ':' +
+                              str(round(total_profit, 2)) + 'USD')
             for act_pos in active_positions:
                 if act_pos.magic == MAGIC:
                     close_position(investor, act_pos, '07')
             if investor['open_trades'] == 'Закрыть и отключить':
-                disable_dcs(investor)
+                await disable_dcs(investor)
 
 
 def get_time_offset(investor):
@@ -663,7 +654,7 @@ def get_deal_volume(investor, lieder_position, lieder_balance_value):
     return result
 
 
-def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, sl=0.0):
+async def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, sl=0.0):
     """Открытие позиции"""
     mt = None
     if investor['login'] == source['investors'][0]['login']:
@@ -707,7 +698,7 @@ def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, 
         "type_time": mt.ORDER_TIME_GTC,
         "type_filling": mt.ORDER_FILLING_RETURN,
     }
-    checked_request = edit_volume(investor, request)  # Проверка и расчет объема при недостатке маржи
+    checked_request = await edit_volume(investor, request)  # Проверка и расчет объема при недостатке маржи
     if checked_request:
         result = mt.order_send(checked_request)
         return result
@@ -715,7 +706,7 @@ def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, 
         return {'retcode': -100}
 
 
-def edit_volume(investor, request):
+async def edit_volume(investor, request):
     """Расчет объема при недостатке маржи и проверка на максимальный"""
     mt = None
     if investor['login'] == source['investors'][0]['login']:
@@ -727,7 +718,7 @@ def edit_volume(investor, request):
     if response.retcode == 10014:  # Неправильный объем
         max_vol = mt.symbol_info(request['symbol']).volume_max
         if request['volume'] > max_vol:
-            set_comment('Объем сделки больше максимального')
+            await set_comment('Объем сделки больше максимального')
             request = None
     elif response.retcode == 10019:  # Нет достаточных денежных средств для выполнения запроса
         if source['investors']['not_enough_margin'] == 'Минимальный объем':
@@ -1023,7 +1014,7 @@ async def patching_connection_exchange():
                 force_close_all_positions(investor=investor, reason=comment)
         else:
             comment = comment_json
-        set_comment(comment=comment)
+        await set_comment(comment=comment)
     except Exception as e:
         print("Exception in patching_connection_exchange:", e)
 
@@ -1044,7 +1035,7 @@ async def update_lieder_info(sleep=sleep_lieder_update):
         if len(source) > 0:
             init_res = init_mt(init_data=source['lieder'])
             if not init_res:
-                set_comment('Ошибка инициализации лидера')
+                await set_comment('Ошибка инициализации лидера')
                 await asyncio.sleep(sleep)
                 continue
             lieder_balance = Mt_lid.account_info().balance
@@ -1060,18 +1051,18 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
-    access_starter(investor)
-    check_notification(investor)
+    await access_starter(investor)
+    await check_notification(investor)
     init_res = init_mt(init_data=investor)
     if not init_res:
-        set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
+        await set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
     # enable_algotrading()
     print(f' - {investor["login"]} - {len(Mt_lid.positions_get())} positions. Access:', investor['dcs_access'])
     if investor['dcs_access']:
-        execute_conditions(investor=investor)  # проверка условий кейса закрытия
+        await execute_conditions(investor=investor)  # проверка условий кейса закрытия
     if investor['dcs_access']:
-        check_stop_limits(investor=investor)  # проверка условий стоп-лосс
+        await check_stop_limits(investor=investor)  # проверка условий стоп-лосс
     if investor['dcs_access']:
         for pos_lid in lieder_positions:
             inv_tp = get_lieder_pips_tp(pos_lid)
@@ -1081,16 +1072,19 @@ async def execute_investor(investor):
                     volume = get_deal_volume(investor, lieder_position=pos_lid,
                                              lieder_balance_value=lieder_balance if investor[
                                                                                         'multiplier'] == 'Баланс' else lieder_equity)
-                    response = open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
-                                             lot=volume, sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+                    response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
+                                                   lot=volume, sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+                    ret_code = None
                     try:
                         ret_code = response.retcode
                     except AttributeError:
-                        ret_code = response['retcode']
-                    msg = str(investor['login']) + ' ' + send_retcodes[ret_code][1] + ' : ' + str(ret_code)
-                    if ret_code != 10009:  # Заявка выполнена
-                        set_comment('\t' + msg)
-                    print(msg)
+                        if response:
+                            ret_code = response['retcode']
+                    if ret_code:
+                        msg = str(investor['login']) + ' ' + send_retcodes[ret_code][1] + ' : ' + str(ret_code)
+                        if ret_code != 10009:  # Заявка выполнена
+                            await set_comment('\t' + msg)
+                        print(msg)
             # else:
             #     set_comment('Не выполнено условие +/-')
     # закрытие позиций от лидера
