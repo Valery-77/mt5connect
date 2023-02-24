@@ -12,6 +12,8 @@ from django.core.serializers.json import DjangoJSONEncoder
 # from win32gui import PostMessage, GetAncestor, FindWindow
 
 send_retcodes = {
+    -400: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сделки не изменен'),
+    -300: ('CUSTOM_RETCODE_EQUAL_VOLUME', 'Новый объем сделки равен существующему'),
     -200: ('CUSTOM_RETCODE_WRONG_SYMBOL', 'Нет такого торгового символа'),
     -100: ('CUSTOM_RETCODE_NOT_ENOUGH_MARGIN', 'Нехватка маржи. Выбран режим - Не открывать сделку'),
     10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
@@ -86,6 +88,7 @@ reasons_code = {
     '05': 'Нет связи с биржей',
     '06': 'Закрыто инвестором',
     '07': 'Закрыто по условию стоп-лосс',
+    '08': 'Объем изменен',
 }
 
 
@@ -662,25 +665,25 @@ def get_deal_volume(investor, lieder_position, lieder_balance_value):
 
 def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, sl=0.0):
     """Открытие позиции"""
-    Mt = None
+    mt = None
     if investor['login'] == source['investors'][0]['login']:
-        Mt = Mt_inv_1
+        mt = Mt_inv_1
     if investor['login'] == source['investors'][1]['login']:
-        Mt = Mt_inv_2
+        mt = Mt_inv_2
 
     try:
-        point = Mt.symbol_info(symbol).point
+        point = mt.symbol_info(symbol).point
         price = tp_in = sl_in = 0.0
         if deal_type == 0:  # BUY
-            deal_type = Mt.ORDER_TYPE_BUY
-            price = Mt.symbol_info_tick(symbol).ask
+            deal_type = mt.ORDER_TYPE_BUY
+            price = mt.symbol_info_tick(symbol).ask
         if tp != 0:
             tp_in = price + tp * point
         if sl != 0:
             sl_in = price - sl * point
         elif deal_type == 1:  # SELL
-            deal_type = Mt.ORDER_TYPE_SELL
-            price = Mt.symbol_info_tick(symbol).bid
+            deal_type = mt.ORDER_TYPE_SELL
+            price = mt.symbol_info_tick(symbol).bid
             if tp != 0:
                 tp_in = price - tp * point
             if sl != 0:
@@ -691,7 +694,7 @@ def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, 
     comment.lieder_ticket = sender_ticket
     comment.reason = '01'
     request = {
-        "action": Mt.TRADE_ACTION_DEAL,
+        "action": mt.TRADE_ACTION_DEAL,
         "symbol": symbol,
         "volume": lot,
         "type": deal_type,
@@ -701,12 +704,12 @@ def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp=0.0, 
         "deviation": DEVIATION,
         "magic": MAGIC,
         "comment": comment.string(),
-        "type_time": Mt.ORDER_TIME_GTC,
-        "type_filling": Mt.ORDER_FILLING_RETURN,
+        "type_time": mt.ORDER_TIME_GTC,
+        "type_filling": mt.ORDER_FILLING_RETURN,
     }
     checked_request = edit_volume(investor, request)  # Проверка и расчет объема при недостатке маржи
     if checked_request:
-        result = Mt.order_send(checked_request)
+        result = mt.order_send(checked_request)
         return result
     else:
         return {'retcode': -100}
@@ -772,6 +775,51 @@ def close_position(investor, position, reason):
     }
     result = mt.order_send(request)
     return result
+
+
+def modify_volume_position(investor, position, new_volume):
+    """Изменение указанной позиции"""
+    mt = None
+    if investor['login'] == source['investors'][0]['login']:
+        mt = Mt_inv_1
+    if investor['login'] == source['investors'][1]['login']:
+        mt = Mt_inv_2
+    new_comment_str = position.comment
+    if DealComment.is_valid_string(position.comment):
+        comment = DealComment().set_from_string(position.comment)
+        comment.reason = '08'
+        new_comment_str = comment.string()
+    if new_volume > position.volume:  # Увеличение объема
+        request = {
+            "action": mt.TRADE_ACTION_MODIFY,
+            "symbol": position.symbol,
+            "volume": new_volume,
+            "position": position.ticket,
+            "comment": new_comment_str,
+            "type_time": mt.ORDER_TIME_GTC,
+            "type_filling": mt.ORDER_FILLING_FOK,
+        }
+    elif new_volume < position.volume:  # Уменьшение объема
+        request = {
+            "action": mt.TRADE_ACTION_DEAL,
+            "symbol": position.symbol,
+            "volume": position.volume - new_volume,
+            "type": mt.ORDER_TYPE_SELL if position.type == mt.POSITION_TYPE_BUY else mt.ORDER_TYPE_BUY,
+            "position": position.ticket,
+            "price": mt.symbol_info_tick(
+                position.symbol).bid if position.type == mt.POSITION_TYPE_BUY else mt.symbol_info_tick(
+                position.symbol).ask,
+            "deviation": DEVIATION,
+            "magic": MAGIC,
+            "comment": new_comment_str,
+            "type_filling": mt.ORDER_FILLING_FOK,
+        }
+    else:
+        return {'retcode': -300}  # Новый объем сделки равен существующему
+    if request:
+        result = mt.order_send(request)
+        return result
+    return {'retcode': -400}  # Объем сделки не изменен
 
 
 def force_close_all_positions(investor, reason):
