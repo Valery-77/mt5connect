@@ -1042,18 +1042,12 @@ def correct_volume(investor):  # Нужно считать для одного �
             if investors_balance != old_investors_balance[login]:
                 lots_qoef = investors_balance / old_investors_balance[login]
                 if lots_qoef != 1.0:
-                    investor_positions = get_investor_positions(investor=investor, only_own=False)
+                    investor_positions = get_investor_positions(only_own=False)
                     for investor_pos in investor_positions:
                         volume = investor_pos.volume
-                        symbol = investor_pos.symbol
-                        deal_type = investor_pos.type
-                        sender_ticket = investor_pos.ticket
-                        lot = lots_qoef*volume
-                        open_position(investor=investor,
-                                      symbol=symbol,
-                                      deal_type=deal_type,
-                                      lot=lot,
-                                      sender_ticket=sender_ticket)
+                        new_volume = lots_qoef*volume
+                        modify_volume_position(position=investor_pos,
+                                               new_volume=new_volume)
                 old_investors_balance[login] = investors_balance
     except Exception as e:
         print("Exception in get_new_volume:", e)
