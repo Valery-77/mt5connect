@@ -43,7 +43,7 @@ send_retcodes = {-400: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сд
                  10032: ('TRADE_RETCODE_ONLY_REAL', 'Операция разрешена только для реальных счетов'),
                  10033: ('TRADE_RETCODE_LIMIT_ORDERS', 'Достигнут лимит на количество отложенных ордеров'),
                  10034: (
-                 'TRADE_RETCODE_LIMIT_VOLUME', 'Достигнут лимит на объем ордеров и позиций для данного символа'),
+                     'TRADE_RETCODE_LIMIT_VOLUME', 'Достигнут лимит на объем ордеров и позиций для данного символа'),
                  10035: ('TRADE_RETCODE_INVALID_ORDER', 'Неверный или запрещённый тип ордера'),
                  10036: ('TRADE_RETCODE_POSITION_CLOSED', 'Позиция с указанным POSITION_IDENTIFIER уже закрыта'),
                  10038: ('TRADE_RETCODE_INVALID_CLOSE_VOLUME', 'Закрываемый объем превышает текущий объем позиции'),
@@ -52,10 +52,12 @@ send_retcodes = {-400: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сд
                          'Количество открытых позиций, которое можно одновременно иметь на счете, '
                          'может быть ограничено настройками сервера'),
                  10041: (
-                 'TRADE_RETCODE_REJECT_CANCEL', 'Запрос на активацию отложенного ордера отклонен, а сам ордер отменен'),
+                     'TRADE_RETCODE_REJECT_CANCEL',
+                     'Запрос на активацию отложенного ордера отклонен, а сам ордер отменен'),
                  10042: (
-                 'TRADE_RETCODE_LONG_ONLY', 'Запрос отклонен, так как на символе установлено правило "Разрешены только '
-                                            'длинные позиции"  (POSITION_TYPE_BUY)'),
+                     'TRADE_RETCODE_LONG_ONLY',
+                     'Запрос отклонен, так как на символе установлено правило "Разрешены только '
+                     'длинные позиции"  (POSITION_TYPE_BUY)'),
                  10043: ('TRADE_RETCODE_SHORT_ONLY',
                          'Запрос отклонен, так как на символе установлено правило "Разрешены только '
                          'короткие позиции" (POSITION_TYPE_SELL)'),
@@ -67,8 +69,9 @@ send_retcodes = {-400: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сд
                          'закрывать существующие позиции только по правилу FIFO" ('
                          'ACCOUNT_FIFO_CLOSE=true)'),
                  10046: (
-                 'TRADE_RETCODE_HEDGE_PROHIBITED', 'Запрос отклонен, так как для торгового счета установлено правило '
-                                                   '"Запрещено открывать встречные позиции по одному символу"')}
+                     'TRADE_RETCODE_HEDGE_PROHIBITED',
+                     'Запрос отклонен, так как для торгового счета установлено правило '
+                     '"Запрещено открывать встречные позиции по одному символу"')}
 last_errors = {
     1: ('RES_S_OK', 'generic success'),
     -1: ('RES_E_FAIL', 'generic fail'),
@@ -170,7 +173,7 @@ start_date = datetime.now().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA  # def
 trading_event = asyncio.Event()  # init async event
 
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update = 1  # пауза для обновления лидера
+sleep_lieder_update = 5  # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -711,6 +714,14 @@ def close_position(position, reason):
     return result
 
 
+def get_position_pair_volume(investor_position):
+    volume = 0
+    for _ in Mt.positions_get():
+        if _.comment == investor_position.comment:
+            volume += _.volume
+    return volume
+
+
 def modify_volume_position(position, new_volume):
     """Изменение указанной позиции"""
     new_comment_str = position.comment
@@ -720,10 +731,15 @@ def modify_volume_position(position, new_volume):
         new_comment_str = comment.string()
     if new_volume > position.volume:  # Увеличение объема
         request = {
-            "action": Mt.TRADE_ACTION_MODIFY,
+            "action": Mt.TRADE_ACTION_DEAL,
             "symbol": position.symbol,
-            "volume": new_volume,
-            "position": position.ticket,
+            "volume": new_volume - position.volume,
+            "type": position.type,
+            "price": Mt.symbol_info_tick(
+                position.symbol).bid if position.type == Mt.POSITION_TYPE_SELL else Mt.symbol_info_tick(
+                position.symbol).ask,
+            "deviation": DEVIATION,
+            "magic": MAGIC,
             "comment": new_comment_str,
             "type_time": Mt.ORDER_TIME_GTC,
             "type_filling": Mt.ORDER_FILLING_FOK,
@@ -746,6 +762,8 @@ def modify_volume_position(position, new_volume):
     else:
         return {'retcode': -300}  # Новый объем сделки равен существующему
     if request:
+        if request['type'] == Mt.POSITION_TYPE_BUY and new_volume <= get_position_pair_volume(position):
+            return {'retcode': -300}  # Новый объем сделки равен существующему
         result = Mt.order_send(request)
         return result
     return {'retcode': -400}  # Объем сделки не изменен
@@ -1010,11 +1028,10 @@ async def execute_investor(investor):
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                                    lot=volume, sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
                     ret_code = None
-                    try:
+                    if type(response) == type(Mt.OrderSendResult):
                         ret_code = response.retcode
-                    except AttributeError:
-                        if response:
-                            ret_code = response['retcode']
+                    elif type(response) == type(dict):
+                        ret_code = response['retcode']
                     if ret_code:
                         msg = str(investor['login']) + ' ' + send_retcodes[ret_code][1] + ' : ' + str(ret_code)
                         if ret_code != 10009:  # Заявка выполнена
@@ -1068,9 +1085,9 @@ async def task_manager():
 
 
 if __name__ == '__main__':
-    # set_dummy_data()
+    set_dummy_data()
     event_loop = asyncio.new_event_loop()
-    event_loop.create_task(update_setup())  # для теста без сервера закомментировать
+    # event_loop.create_task(update_setup())  # для теста без сервера закомментировать
     event_loop.create_task(update_lieder_info())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
