@@ -1037,15 +1037,16 @@ def correct_volume(investor):  # Нужно считать для одного �
             investors_balance = investor['investment_size']
             global old_investors_balance
             login = investor.get("login")
-            if not old_investors_balance[login]:
+            if login not in old_investors_balance:
                 old_investors_balance[login] = investors_balance
             if investors_balance != old_investors_balance[login]:
                 lots_qoef = investors_balance / old_investors_balance[login]
                 if lots_qoef != 1.0:
                     investor_positions = get_investor_positions(only_own=False)
+                    decimals = 2
                     for investor_pos in investor_positions:
                         volume = investor_pos.volume
-                        new_volume = lots_qoef*volume
+                        new_volume = round(lots_qoef*volume, decimals)
                         modify_volume_position(position=investor_pos,
                                                new_volume=new_volume)
                 old_investors_balance[login] = investors_balance
