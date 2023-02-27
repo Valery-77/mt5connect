@@ -1013,10 +1013,6 @@ async def execute_investor(investor):
         return
     # enable_algotrading()
     print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'])
-
-    for _ in get_investor_positions():
-        modify_volume_position(_, 0.09)
-
     if investor['dcs_access']:
         await execute_conditions(investor=investor)  # проверка условий кейса закрытия
     if investor['dcs_access']:
