@@ -163,7 +163,7 @@ MAGIC = 9876543210  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
 UTC_OFFSET_TIMEDELTA = datetime.now() - datetime.utcnow()
 
-# output_report = []  # сюда выводится отчет
+# currency_coefficient = 1
 lieder_balance = 0  # default var
 lieder_equity = 0  # default var
 lieder_positions = []  # default var
@@ -548,9 +548,55 @@ async def check_stop_limits(investor):
                 await disable_dcs(investor)
 
 
+def get_currency_coefficient(investor):
+    eurusd = usdrub = eurrub = -1
+    eur_rates = Mt.copy_rates_from_pos('EURUSD', Mt.TIMEFRAME_M1, 0, 1)
+    print('---eur--', eur_rates, end='')
+    if eur_rates:
+        eurusd = eur_rates[0][4]
+        print('  eurusd:', eurusd)
+    rub_rates = Mt.copy_rates_range("USDRUB", Mt.TIMEFRAME_M1, 0, 1)
+    print('---rub--', rub_rates, end='')
+    if rub_rates:
+        usdrub = rub_rates[0][4]
+        print('  usdrub:', usdrub, end='')
+    if eur_rates and rub_rates:
+        eurrub = usdrub * eurusd
+        print('    eurrub:', eurrub)
+    currency_coefficient = 1
+    account = Mt.account_info()
+    if account:
+        try:
+            account_currency = account.currency
+            if (account_currency == 'USD' and investor['accounts_in_diff_curr'] == "Доллары") or \
+                    (account_currency == 'EUR' and investor['accounts_in_diff_curr'] == "Евро") or \
+                    (account_currency == 'RUB' and investor['accounts_in_diff_curr'] == "Рубли"):
+                currency_coefficient = 1
+            elif account_currency == 'USD':
+                if investor['accounts_in_diff_curr'] == "Евро":
+                    currency_coefficient = 1 / eurusd
+                elif investor['accounts_in_diff_curr'] == "Рубли":
+                    currency_coefficient = usdrub
+            elif account_currency == 'EUR':
+                if investor['accounts_in_diff_curr'] == "Доллары":
+                    currency_coefficient = eurusd
+                elif investor['accounts_in_diff_curr'] == "Рубли":
+                    currency_coefficient = eurrub
+            elif account_currency == 'RUB':
+                if investor['accounts_in_diff_curr'] == "Доллары":
+                    currency_coefficient = 1 / usdrub
+                elif investor['accounts_in_diff_curr'] == "Евро":
+                    currency_coefficient = 1 / eurrub
+        except Exception as e:
+            print(e)
+            currency_coefficient = 1
+    return currency_coefficient
+
+
 def get_time_offset():
     symbol = 'EURUSD'
     rates = Mt.copy_rates_from_pos(symbol, Mt.TIMEFRAME_M1, 0, 1)
+
     if rates:
         server_time = datetime.fromtimestamp(rates[0][0])
         current_time = datetime.now().replace(microsecond=0)
@@ -714,22 +760,27 @@ def close_position(position, reason):
     return result
 
 
-def get_position_pair_volume(investor_position):
-    volume = 0
-    for _ in Mt.positions_get():
-        if _.comment == investor_position.comment:
-            volume += _.volume
-    return volume
+# def get_position_pair_volume(investor_position):
+#     volume = 0
+#     for _ in Mt.positions_get():
+#         if _.comment == investor_position.comment:
+#             volume += _.volume
+#     return volume
 
 
 def modify_volume_position(position, new_volume):
     """Изменение указанной позиции"""
     new_comment_str = position.comment
-    total_volume = get_position_pair_volume(position)
     if DealComment.is_valid_string(position.comment):
         comment = DealComment().set_from_string(position.comment)
         comment.reason = '08'
         new_comment_str = comment.string()
+
+    total_volume = 0
+    for _ in Mt.positions_get():
+        if _.comment == position.comment:
+            total_volume += _.volume
+
     if new_volume > total_volume:  # Увеличение объема
         request = {
             "action": Mt.TRADE_ACTION_DEAL,
@@ -924,6 +975,10 @@ async def source_setup():
         #     print('==========   ', response['access_1'], source['investors'][0]['dcs_access'], ' // ',
         #           response['access_2'],
         #           source['investors'][1]['dcs_access'])
+
+    for _ in main_source['investors']:  # пересчет стартового капитала под валюту счета
+        _['investment_size'] *= get_currency_coefficient(main_source['investors'][main_source['investors'].index(_)])
+
     source = main_source.copy()
 
 
@@ -995,7 +1050,7 @@ async def update_lieder_info(sleep=sleep_lieder_update):
             lieder_balance = Mt.account_info().balance
             lieder_equity = Mt.account_info().equity
             lieder_positions = Mt.positions_get()
-            Mt.shutdown()
+            # Mt.shutdown()
             store_change_disconnect_state()  # сохранение Отключился в список
             print(f'\nLIEDER {source["lieder"]["login"]} - {len(lieder_positions)} positions :',
                   datetime.utcnow().replace(microsecond=0), ' dUTC:', UTC_OFFSET_TIMEDELTA,
@@ -1005,6 +1060,8 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
+    # get_time_offset()
+    # print('\n')
     await access_starter(investor)
     await check_notification(investor)
     init_res = init_mt(init_data=investor)
@@ -1012,6 +1069,7 @@ async def execute_investor(investor):
         await set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
     # enable_algotrading()
+
     print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'])
     if investor['dcs_access']:
         await execute_conditions(investor=investor)  # проверка условий кейса закрытия
@@ -1045,7 +1103,7 @@ async def execute_investor(investor):
             (not investor['dcs_access'] and investor[
                 'accompany_transactions'] == 'Да'):  # если сопровождать сделки или доступ есть
         close_positions_by_lieder(positions_lieder=lieder_positions, investor=investor)
-    Mt.shutdown()
+    # Mt.shutdown()
 
 
 def get_new_volume(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого.
@@ -1086,9 +1144,9 @@ async def task_manager():
 
 
 if __name__ == '__main__':
-    set_dummy_data()
+    # set_dummy_data()
     event_loop = asyncio.new_event_loop()
-    # event_loop.create_task(update_setup())  # для теста без сервера закомментировать
+    event_loop.create_task(update_setup())  # для теста без сервера закомментировать
     event_loop.create_task(update_lieder_info())
     event_loop.create_task(task_manager())
     event_loop.run_forever()
