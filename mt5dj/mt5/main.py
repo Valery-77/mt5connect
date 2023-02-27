@@ -725,15 +725,16 @@ def get_position_pair_volume(investor_position):
 def modify_volume_position(position, new_volume):
     """Изменение указанной позиции"""
     new_comment_str = position.comment
+    total_volume = get_position_pair_volume(position)
     if DealComment.is_valid_string(position.comment):
         comment = DealComment().set_from_string(position.comment)
         comment.reason = '08'
         new_comment_str = comment.string()
-    if new_volume > position.volume:  # Увеличение объема
+    if new_volume > total_volume:  # Увеличение объема
         request = {
             "action": Mt.TRADE_ACTION_DEAL,
             "symbol": position.symbol,
-            "volume": new_volume - position.volume,
+            "volume": new_volume - total_volume,
             "type": position.type,
             "price": Mt.symbol_info_tick(
                 position.symbol).bid if position.type == Mt.POSITION_TYPE_SELL else Mt.symbol_info_tick(
@@ -744,11 +745,11 @@ def modify_volume_position(position, new_volume):
             "type_time": Mt.ORDER_TIME_GTC,
             "type_filling": Mt.ORDER_FILLING_FOK,
         }
-    elif new_volume < position.volume:  # Уменьшение объема
+    elif new_volume < total_volume:  # Уменьшение объема
         request = {
             "action": Mt.TRADE_ACTION_DEAL,
             "symbol": position.symbol,
-            "volume": position.volume - new_volume,
+            "volume": total_volume - new_volume,
             "type": Mt.ORDER_TYPE_SELL if position.type == Mt.POSITION_TYPE_BUY else Mt.ORDER_TYPE_BUY,
             "position": position.ticket,
             "price": Mt.symbol_info_tick(
@@ -762,7 +763,7 @@ def modify_volume_position(position, new_volume):
     else:
         return {'retcode': -300}  # Новый объем сделки равен существующему
     if request:
-        if request['type'] == Mt.POSITION_TYPE_BUY and new_volume <= get_position_pair_volume(position):
+        if request['type'] == Mt.POSITION_TYPE_BUY and new_volume <= total_volume:
             return {'retcode': -300}  # Новый объем сделки равен существующему
         result = Mt.order_send(request)
         return result
@@ -1012,6 +1013,10 @@ async def execute_investor(investor):
         return
     # enable_algotrading()
     print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'])
+
+    for _ in get_investor_positions():
+        modify_volume_position(_, 0.09)
+
     if investor['dcs_access']:
         await execute_conditions(investor=investor)  # проверка условий кейса закрытия
     if investor['dcs_access']:
