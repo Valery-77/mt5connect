@@ -43,7 +43,7 @@ send_retcodes = {-400: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сд
                  10032: ('TRADE_RETCODE_ONLY_REAL', 'Операция разрешена только для реальных счетов'),
                  10033: ('TRADE_RETCODE_LIMIT_ORDERS', 'Достигнут лимит на количество отложенных ордеров'),
                  10034: (
-                 'TRADE_RETCODE_LIMIT_VOLUME', 'Достигнут лимит на объем ордеров и позиций для данного символа'),
+                     'TRADE_RETCODE_LIMIT_VOLUME', 'Достигнут лимит на объем ордеров и позиций для данного символа'),
                  10035: ('TRADE_RETCODE_INVALID_ORDER', 'Неверный или запрещённый тип ордера'),
                  10036: ('TRADE_RETCODE_POSITION_CLOSED', 'Позиция с указанным POSITION_IDENTIFIER уже закрыта'),
                  10038: ('TRADE_RETCODE_INVALID_CLOSE_VOLUME', 'Закрываемый объем превышает текущий объем позиции'),
@@ -52,10 +52,12 @@ send_retcodes = {-400: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сд
                          'Количество открытых позиций, которое можно одновременно иметь на счете, '
                          'может быть ограничено настройками сервера'),
                  10041: (
-                 'TRADE_RETCODE_REJECT_CANCEL', 'Запрос на активацию отложенного ордера отклонен, а сам ордер отменен'),
+                     'TRADE_RETCODE_REJECT_CANCEL',
+                     'Запрос на активацию отложенного ордера отклонен, а сам ордер отменен'),
                  10042: (
-                 'TRADE_RETCODE_LONG_ONLY', 'Запрос отклонен, так как на символе установлено правило "Разрешены только '
-                                            'длинные позиции"  (POSITION_TYPE_BUY)'),
+                     'TRADE_RETCODE_LONG_ONLY',
+                     'Запрос отклонен, так как на символе установлено правило "Разрешены только '
+                     'длинные позиции"  (POSITION_TYPE_BUY)'),
                  10043: ('TRADE_RETCODE_SHORT_ONLY',
                          'Запрос отклонен, так как на символе установлено правило "Разрешены только '
                          'короткие позиции" (POSITION_TYPE_SELL)'),
@@ -67,8 +69,9 @@ send_retcodes = {-400: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сд
                          'закрывать существующие позиции только по правилу FIFO" ('
                          'ACCOUNT_FIFO_CLOSE=true)'),
                  10046: (
-                 'TRADE_RETCODE_HEDGE_PROHIBITED', 'Запрос отклонен, так как для торгового счета установлено правило '
-                                                   '"Запрещено открывать встречные позиции по одному символу"')}
+                     'TRADE_RETCODE_HEDGE_PROHIBITED',
+                     'Запрос отклонен, так как для торгового счета установлено правило '
+                     '"Запрещено открывать встречные позиции по одному символу"')}
 last_errors = {
     1: ('RES_S_OK', 'generic success'),
     -1: ('RES_E_FAIL', 'generic fail'),
@@ -160,7 +163,7 @@ MAGIC = 9876543210  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
 UTC_OFFSET_TIMEDELTA = datetime.now() - datetime.utcnow()
 
-# output_report = []  # сюда выводится отчет
+# currency_coefficient = 1
 lieder_balance = 0  # default var
 lieder_equity = 0  # default var
 lieder_positions = []  # default var
@@ -170,7 +173,7 @@ start_date = datetime.now().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA  # def
 trading_event = asyncio.Event()  # init async event
 
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update = 1  # пауза для обновления лидера
+sleep_lieder_update = 5  # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -545,9 +548,55 @@ async def check_stop_limits(investor):
                 await disable_dcs(investor)
 
 
+def get_currency_coefficient(investor):
+    eurusd = usdrub = eurrub = -1
+    eur_rates = Mt.copy_rates_from_pos('EURUSD', Mt.TIMEFRAME_M1, 0, 1)
+    print('---eur--', eur_rates, end='')
+    if eur_rates:
+        eurusd = eur_rates[0][4]
+        print('  eurusd:', eurusd)
+    rub_rates = Mt.copy_rates_range("USDRUB", Mt.TIMEFRAME_M1, 0, 1)
+    print('---rub--', rub_rates, end='')
+    if rub_rates:
+        usdrub = rub_rates[0][4]
+        print('  usdrub:', usdrub, end='')
+    if eur_rates and rub_rates:
+        eurrub = usdrub * eurusd
+        print('    eurrub:', eurrub)
+    currency_coefficient = 1
+    account = Mt.account_info()
+    if account:
+        try:
+            account_currency = account.currency
+            if (account_currency == 'USD' and investor['accounts_in_diff_curr'] == "Доллары") or \
+                    (account_currency == 'EUR' and investor['accounts_in_diff_curr'] == "Евро") or \
+                    (account_currency == 'RUB' and investor['accounts_in_diff_curr'] == "Рубли"):
+                currency_coefficient = 1
+            elif account_currency == 'USD':
+                if investor['accounts_in_diff_curr'] == "Евро":
+                    currency_coefficient = 1 / eurusd
+                elif investor['accounts_in_diff_curr'] == "Рубли":
+                    currency_coefficient = usdrub
+            elif account_currency == 'EUR':
+                if investor['accounts_in_diff_curr'] == "Доллары":
+                    currency_coefficient = eurusd
+                elif investor['accounts_in_diff_curr'] == "Рубли":
+                    currency_coefficient = eurrub
+            elif account_currency == 'RUB':
+                if investor['accounts_in_diff_curr'] == "Доллары":
+                    currency_coefficient = 1 / usdrub
+                elif investor['accounts_in_diff_curr'] == "Евро":
+                    currency_coefficient = 1 / eurrub
+        except Exception as e:
+            print(e)
+            currency_coefficient = 1
+    return currency_coefficient
+
+
 def get_time_offset():
     symbol = 'EURUSD'
     rates = Mt.copy_rates_from_pos(symbol, Mt.TIMEFRAME_M1, 0, 1)
+
     if rates:
         server_time = datetime.fromtimestamp(rates[0][0])
         current_time = datetime.now().replace(microsecond=0)
@@ -711,6 +760,14 @@ def close_position(position, reason):
     return result
 
 
+# def get_position_pair_volume(investor_position):
+#     volume = 0
+#     for _ in Mt.positions_get():
+#         if _.comment == investor_position.comment:
+#             volume += _.volume
+#     return volume
+
+
 def modify_volume_position(position, new_volume):
     """Изменение указанной позиции"""
     new_comment_str = position.comment
@@ -718,21 +775,34 @@ def modify_volume_position(position, new_volume):
         comment = DealComment().set_from_string(position.comment)
         comment.reason = '08'
         new_comment_str = comment.string()
-    if new_volume > position.volume:  # Увеличение объема
+    else:
+        return {'retcode': -500}  # чужая позиция
+
+    total_volume = 0  # вычисление общего объема по связанным позициям
+    for _ in Mt.positions_get():
+        if _.comment == position.comment:
+            total_volume += _.volume
+
+    if new_volume > total_volume:  # Увеличение объема
         request = {
-            "action": Mt.TRADE_ACTION_MODIFY,
+            "action": Mt.TRADE_ACTION_DEAL,
             "symbol": position.symbol,
-            "volume": new_volume,
-            "position": position.ticket,
+            "volume": new_volume - total_volume,
+            "type": position.type,
+            "price": Mt.symbol_info_tick(
+                position.symbol).bid if position.type == Mt.POSITION_TYPE_SELL else Mt.symbol_info_tick(
+                position.symbol).ask,
+            "deviation": DEVIATION,
+            "magic": MAGIC,
             "comment": new_comment_str,
             "type_time": Mt.ORDER_TIME_GTC,
             "type_filling": Mt.ORDER_FILLING_FOK,
         }
-    elif new_volume < position.volume:  # Уменьшение объема
+    elif new_volume < total_volume:  # Уменьшение объема
         request = {
             "action": Mt.TRADE_ACTION_DEAL,
             "symbol": position.symbol,
-            "volume": position.volume - new_volume,
+            "volume": total_volume - new_volume,
             "type": Mt.ORDER_TYPE_SELL if position.type == Mt.POSITION_TYPE_BUY else Mt.ORDER_TYPE_BUY,
             "position": position.ticket,
             "price": Mt.symbol_info_tick(
@@ -746,6 +816,8 @@ def modify_volume_position(position, new_volume):
     else:
         return {'retcode': -300}  # Новый объем сделки равен существующему
     if request:
+        if request['type'] == Mt.POSITION_TYPE_BUY and new_volume <= total_volume:
+            return {'retcode': -300}  # Новый объем сделки равен существующему
         result = Mt.order_send(request)
         return result
     return {'retcode': -400}  # Объем сделки не изменен
@@ -905,6 +977,10 @@ async def source_setup():
         #     print('==========   ', response['access_1'], source['investors'][0]['dcs_access'], ' // ',
         #           response['access_2'],
         #           source['investors'][1]['dcs_access'])
+
+    for _ in main_source['investors']:  # пересчет стартового капитала под валюту счета
+        _['investment_size'] *= get_currency_coefficient(main_source['investors'][main_source['investors'].index(_)])
+
     source = main_source.copy()
 
 
@@ -976,7 +1052,7 @@ async def update_lieder_info(sleep=sleep_lieder_update):
             lieder_balance = Mt.account_info().balance
             lieder_equity = Mt.account_info().equity
             lieder_positions = Mt.positions_get()
-            Mt.shutdown()
+            # Mt.shutdown()
             store_change_disconnect_state()  # сохранение Отключился в список
             print(f'\nLIEDER {source["lieder"]["login"]} - {len(lieder_positions)} positions :',
                   datetime.utcnow().replace(microsecond=0), ' dUTC:', UTC_OFFSET_TIMEDELTA,
@@ -988,13 +1064,35 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 async def execute_investor(investor):
     await access_starter(investor)
     await check_notification(investor)
+
+    synchronize = True if investor['synchronize_deals'] == 'Да' else False
+
+    if synchronize:
+        # if investor['closed_deal_investor'] == 'Нет' and get_disconnect_change(investor) == 'Enabled':
+        pass
+    else:
+        print(f'\t {investor["login"]} - cинхронизация отключена')
+        return
+
     init_res = init_mt(init_data=investor)
     correct_volume(investor)
     if not init_res:
         await set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
-    # enable_algotrading()
+
+    # if synchronize:   # если "синхронизировать" - подгон объемов существующих позиций инвестора
+    #     for inv_pos in Mt.positions_get():
+    #         if DealComment.is_valid_string(inv_pos.comment):
+    #             comment = DealComment().set_from_string(inv_pos.comment)
+    #             lid_volume = None  # объем родительской позиции
+    #             for lid_pos in lieder_positions:
+    #                 if lid_pos.ticket == comment.lieder_ticket:
+    #                     lid_volume = lid_pos.volume
+    #                     break
+    #             if lid_volume:
+    #                 modify_volume_position(inv_pos, new_volume=lid_volume)
     print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'])
+    # enable_algotrading()
     if investor['dcs_access']:
         await execute_conditions(investor=investor)  # проверка условий кейса закрытия
     if investor['dcs_access']:
@@ -1010,12 +1108,12 @@ async def execute_investor(investor):
                                                                                         'multiplier'] == 'Баланс' else lieder_equity)
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                                    lot=volume, sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+
                     ret_code = None
-                    try:
+                    if type(response) == type(Mt.OrderSendResult):
                         ret_code = response.retcode
-                    except AttributeError:
-                        if response:
-                            ret_code = response['retcode']
+                    elif type(response) == type(dict):
+                        ret_code = response['retcode']
                     if ret_code:
                         msg = str(investor['login']) + ' ' + send_retcodes[ret_code][1] + ' : ' + str(ret_code)
                         if ret_code != 10009:  # Заявка выполнена
@@ -1024,11 +1122,10 @@ async def execute_investor(investor):
             # else:
             #     set_comment('Не выполнено условие +/-')
     # закрытие позиций от лидера
-    if investor['dcs_access'] or \
-            (not investor['dcs_access'] and investor[
-                'accompany_transactions'] == 'Да'):  # если сопровождать сделки или доступ есть
+    if (investor['dcs_access'] or  # если сопровождать сделки или доступ есть
+            (not investor['dcs_access'] and investor['accompany_transactions'] == 'Да')):
         close_positions_by_lieder(positions_lieder=lieder_positions, investor=investor)
-    Mt.shutdown()
+    # Mt.shutdown()
 
 
 def correct_volume(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого.
@@ -1042,6 +1139,7 @@ def correct_volume(investor):  # Нужно считать для одного �
             if investors_balance != old_investors_balance[login]:
                 lots_qoef = investors_balance / old_investors_balance[login]
                 if lots_qoef != 1.0:
+                    init_mt(investor)
                     investor_positions = get_investor_positions(only_own=False)
                     decimals = 2
                     for investor_pos in investor_positions:
@@ -1057,14 +1155,17 @@ def correct_volume(investor):  # Нужно считать для одного �
 async def task_manager():
     while True:
         await trading_event.wait()
-        if len(source) > 0:
-            for i, _ in enumerate(source['investors']):
-                event_loop.create_task(execute_investor(_))
+
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
         await patching_connection_exchange()
         if current_time == "10:00:00":
             await patching_quotes()
+
+        if len(source) > 0:
+            for i, _ in enumerate(source['investors']):
+                event_loop.create_task(execute_investor(_))
+
         trading_event.clear()
 
 
