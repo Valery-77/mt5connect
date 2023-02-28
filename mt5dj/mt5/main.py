@@ -775,8 +775,10 @@ def modify_volume_position(position, new_volume):
         comment = DealComment().set_from_string(position.comment)
         comment.reason = '08'
         new_comment_str = comment.string()
+    else:
+        return {'retcode': -500}  # чужая позиция
 
-    total_volume = 0
+    total_volume = 0  # вычисление общего объема по связанным позициям
     for _ in Mt.positions_get():
         if _.comment == position.comment:
             total_volume += _.volume
@@ -1060,8 +1062,7 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
-    # get_time_offset()
-    # print('\n')
+    sinchronize = True if investor['synchronize_deals'] == 'Да' else False
     await access_starter(investor)
     await check_notification(investor)
     init_res = init_mt(init_data=investor)
@@ -1070,8 +1071,20 @@ async def execute_investor(investor):
         return
     # enable_algotrading()
 
+    if sinchronize:   # если "синхронизировать" - подгон объемов существующих позиций инвестора
+        for inv_pos in Mt.positions_get():
+            if DealComment.is_valid_string(inv_pos.comment):
+                comment = DealComment().set_from_string(inv_pos.comment)
+                lid_volume = None  # объем родительской позиции
+                for lid_pos in lieder_positions:
+                    if lid_pos.ticket == comment.lieder_ticket:
+                        lid_volume = lid_pos.volume
+                        break
+                if lid_volume:
+                    modify_volume_position(inv_pos, new_volume=lid_volume)
+
     print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'])
-    if investor['dcs_access']:
+    if investor['dcs_access'] and not sinchronize:
         await execute_conditions(investor=investor)  # проверка условий кейса закрытия
     if investor['dcs_access']:
         await check_stop_limits(investor=investor)  # проверка условий стоп-лосс
@@ -1080,12 +1093,13 @@ async def execute_investor(investor):
             inv_tp = get_lieder_pips_tp(pos_lid)
             inv_sl = get_lieder_pips_sl(pos_lid)
             if not is_position_opened(pos_lid, investor):
-                if check_transaction(investor=investor, lieder_position=pos_lid):
+                if sinchronize or check_transaction(investor=investor, lieder_position=pos_lid):
                     volume = get_deal_volume(investor, lieder_position=pos_lid,
                                              lieder_balance_value=lieder_balance if investor[
                                                                                         'multiplier'] == 'Баланс' else lieder_equity)
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                                    lot=volume, sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+
                     ret_code = None
                     if type(response) == type(Mt.OrderSendResult):
                         ret_code = response.retcode
@@ -1099,9 +1113,8 @@ async def execute_investor(investor):
             # else:
             #     set_comment('Не выполнено условие +/-')
     # закрытие позиций от лидера
-    if investor['dcs_access'] or \
-            (not investor['dcs_access'] and investor[
-                'accompany_transactions'] == 'Да'):  # если сопровождать сделки или доступ есть
+    if (investor['dcs_access'] or  # если сопровождать сделки или доступ есть
+            (not investor['dcs_access'] and investor['accompany_transactions'] == 'Да')):
         close_positions_by_lieder(positions_lieder=lieder_positions, investor=investor)
     # Mt.shutdown()
 
@@ -1118,6 +1131,7 @@ def get_new_volume(investor):  # Нужно считать для одного �
                 lots_qoef = investors_balance / old_investors_balance[login]
                 new_volumes = []
                 if lots_qoef != 1.0:
+                    init_mt(investor)
                     investor_positions = get_investor_positions(only_own=False)
                     for pos in list(investor_positions.keys()):
                         investor_pos = investor_positions.get(pos)
@@ -1132,14 +1146,17 @@ def get_new_volume(investor):  # Нужно считать для одного �
 async def task_manager():
     while True:
         await trading_event.wait()
-        if len(source) > 0:
-            for i, _ in enumerate(source['investors']):
-                event_loop.create_task(execute_investor(_))
+
         time_now = datetime.now()
         current_time = time_now.strftime("%H:%M:%S")
         await patching_connection_exchange()
         if current_time == "10:00:00":
             await patching_quotes()
+
+        if len(source) > 0:
+            for i, _ in enumerate(source['investors']):
+                event_loop.create_task(execute_investor(_))
+
         trading_event.clear()
 
 
