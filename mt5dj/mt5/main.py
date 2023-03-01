@@ -173,7 +173,7 @@ start_date = datetime.now().replace(microsecond=0) + UTC_OFFSET_TIMEDELTA  # def
 trading_event = asyncio.Event()  # init async event
 
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update = 5  # пауза для обновления лидера
+sleep_lieder_update = 0.5  # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -551,18 +551,18 @@ async def check_stop_limits(investor):
 def get_currency_coefficient(investor):
     eurusd = usdrub = eurrub = -1
     eur_rates = Mt.copy_rates_from_pos('EURUSD', Mt.TIMEFRAME_M1, 0, 1)
-    print('---eur--', eur_rates, end='')
+    # print('---eur--', eur_rates, end='')
     if eur_rates:
         eurusd = eur_rates[0][4]
-        print('  eurusd:', eurusd)
+        # print('  eurusd:', eurusd)
     rub_rates = Mt.copy_rates_range("USDRUB", Mt.TIMEFRAME_M1, 0, 1)
-    print('---rub--', rub_rates, end='')
+    # print('---rub--', rub_rates, end='')
     if rub_rates:
         usdrub = rub_rates[0][4]
-        print('  usdrub:', usdrub, end='')
+        # print('  usdrub:', usdrub, end='')
     if eur_rates and rub_rates:
         eurrub = usdrub * eurusd
-        print('    eurrub:', eurrub)
+        # print('    eurrub:', eurrub)
     currency_coefficient = 1
     account = Mt.account_info()
     if account:
@@ -978,8 +978,9 @@ async def source_setup():
         #           response['access_2'],
         #           source['investors'][1]['dcs_access'])
 
-    for _ in main_source['investors']:  # пересчет стартового капитала под валюту счета
-        _['investment_size'] *= get_currency_coefficient(main_source['investors'][main_source['investors'].index(_)])
+    if main_source:
+        for _ in main_source['investors']:  # пересчет стартового капитала под валюту счета
+            _['investment_size'] *= get_currency_coefficient(main_source['investors'][main_source['investors'].index(_)])
 
     source = main_source.copy()
 
@@ -1052,7 +1053,7 @@ async def update_lieder_info(sleep=sleep_lieder_update):
             lieder_balance = Mt.account_info().balance
             lieder_equity = Mt.account_info().equity
             lieder_positions = Mt.positions_get()
-            # Mt.shutdown()
+            Mt.shutdown()
             store_change_disconnect_state()  # сохранение Отключился в список
             print(f'\nLIEDER {source["lieder"]["login"]} - {len(lieder_positions)} positions :',
                   datetime.utcnow().replace(microsecond=0), ' dUTC:', UTC_OFFSET_TIMEDELTA,
@@ -1108,11 +1109,10 @@ async def execute_investor(investor):
                                                                                         'multiplier'] == 'Баланс' else lieder_equity)
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                                    lot=volume, sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
-
                     ret_code = None
-                    if type(response) == type(Mt.OrderSendResult):
+                    try:
                         ret_code = response.retcode
-                    elif type(response) == type(dict):
+                    except:
                         ret_code = response['retcode']
                     if ret_code:
                         msg = str(investor['login']) + ' ' + send_retcodes[ret_code][1] + ' : ' + str(ret_code)
@@ -1125,7 +1125,7 @@ async def execute_investor(investor):
     if (investor['dcs_access'] or  # если сопровождать сделки или доступ есть
             (not investor['dcs_access'] and investor['accompany_transactions'] == 'Да')):
         close_positions_by_lieder(positions_lieder=lieder_positions, investor=investor)
-    # Mt.shutdown()
+    Mt.shutdown()
 
 
 def correct_volume(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого.
@@ -1144,7 +1144,7 @@ def correct_volume(investor):  # Нужно считать для одного �
                     decimals = 2
                     for investor_pos in investor_positions:
                         volume = investor_pos.volume
-                        new_volume = round(lots_qoef*volume, decimals)
+                        new_volume = round(lots_qoef * volume, decimals)
                         modify_volume_position(position=investor_pos,
                                                new_volume=new_volume)
                 old_investors_balance[login] = investors_balance
