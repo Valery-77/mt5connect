@@ -610,7 +610,7 @@ def check_transaction(investor, lieder_position):
     price_refund = True if investor['price_refund'] == 'Да' else False
     if not price_refund:  # если не возврат цены
         timeout = investor['waiting_time'] * 60
-        deal_time = int(lieder_position.time_update - get_time_offset())
+        deal_time = int(lieder_position.time_update - get_time_offset(investor))
         curr_time = int(datetime.timestamp(datetime.now().replace(microsecond=0)))
         delta_time = curr_time - deal_time
         if delta_time > timeout:  # если время больше заданного
