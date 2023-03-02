@@ -1162,7 +1162,9 @@ async def execute_investor(investor):
         close_positions_by_lieder(positions_lieder=lieder_positions, investor=investor)
     Mt.shutdown()
 
+
 Mt.shutdown()
+
 
 def correct_volume(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого.
     try:
