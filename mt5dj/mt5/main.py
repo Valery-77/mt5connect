@@ -830,7 +830,7 @@ def modify_volume_position(position, new_volume):
         request = {
             "action": Mt.TRADE_ACTION_DEAL,
             "symbol": position.symbol,
-            "volume": total_volume - new_volume,
+            "volume": position.volume - new_volume,
             "type": Mt.ORDER_TYPE_SELL if position.type == Mt.POSITION_TYPE_BUY else Mt.ORDER_TYPE_BUY,
             "position": position.ticket,
             "price": Mt.symbol_info_tick(
