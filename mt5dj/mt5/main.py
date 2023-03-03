@@ -9,69 +9,73 @@ from django.core.serializers.json import DjangoJSONEncoder
 
 # from win32gui import PostMessage, GetAncestor, FindWindow
 
-send_retcodes = {-400: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сделки не изменен'),
-                 -300: ('CUSTOM_RETCODE_EQUAL_VOLUME', 'Новый объем сделки равен существующему'),
-                 -200: ('CUSTOM_RETCODE_WRONG_SYMBOL', 'Нет такого торгового символа'),
-                 -100: ('CUSTOM_RETCODE_NOT_ENOUGH_MARGIN', 'Нехватка маржи. Выбран режим - Не открывать сделку'),
-                 10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
-                 10006: ('TRADE_RETCODE_REJECT', 'Запрос отклонен'),
-                 10007: ('TRADE_RETCODE_CANCEL', 'Запрос отменен трейдером'),
-                 10008: ('TRADE_RETCODE_PLACED', 'Ордер размещен'),
-                 10009: ('TRADE_RETCODE_DONE', 'Заявка выполнена'),
-                 10010: ('TRADE_RETCODE_DONE_PARTIAL', 'Заявка выполнена частично'),
-                 10011: ('TRADE_RETCODE_ERROR', 'Ошибка обработки запроса'),
-                 10012: ('TRADE_RETCODE_TIMEOUT', 'Запрос отменен по истечению времени'),
-                 10013: ('TRADE_RETCODE_INVALID', 'Неправильный запрос'),
-                 10014: ('TRADE_RETCODE_INVALID_VOLUME', 'Неправильный объем в запросе'),
-                 10015: ('TRADE_RETCODE_INVALID_PRICE', 'Неправильная цена в запросе'),
-                 10016: ('TRADE_RETCODE_INVALID_STOPS', 'Неправильные стопы в запросе'),
-                 10017: ('TRADE_RETCODE_TRADE_DISABLED', 'Торговля запрещена'),
-                 10018: ('TRADE_RETCODE_MARKET_CLOSED', 'Рынок закрыт'),
-                 10019: ('TRADE_RETCODE_NO_MONEY', 'Нет достаточных денежных средств для выполнения запроса'),
-                 10020: ('TRADE_RETCODE_PRICE_CHANGED', 'Цены изменились'),
-                 10021: ('TRADE_RETCODE_PRICE_OFF', 'Отсутствуют котировки для обработки запроса'),
-                 10022: ('TRADE_RETCODE_INVALID_EXPIRATION', 'Неверная дата истечения ордера в запросе'),
-                 10023: ('TRADE_RETCODE_ORDER_CHANGED', 'Состояние ордера изменилось'),
-                 10024: ('TRADE_RETCODE_TOO_MANY_REQUESTS', 'Слишком частые запросы'),
-                 10025: ('TRADE_RETCODE_NO_CHANGES', 'В запросе нет изменений'),
-                 10026: ('TRADE_RETCODE_SERVER_DISABLES_AT', 'Автотрейдинг запрещен сервером'),
-                 10027: ('TRADE_RETCODE_CLIENT_DISABLES_AT', 'Автотрейдинг запрещен клиентским терминалом'),
-                 10028: ('TRADE_RETCODE_LOCKED', 'Запрос заблокирован для обработки'),
-                 10029: ('TRADE_RETCODE_FROZEN', 'Ордер или позиция заморожены'),
-                 10030: ('TRADE_RETCODE_INVALID_FILL', 'Указан неподдерживаемый тип исполнения ордера по остатку'),
-                 10031: ('TRADE_RETCODE_CONNECTION', 'Нет соединения с торговым сервером'),
-                 10032: ('TRADE_RETCODE_ONLY_REAL', 'Операция разрешена только для реальных счетов'),
-                 10033: ('TRADE_RETCODE_LIMIT_ORDERS', 'Достигнут лимит на количество отложенных ордеров'),
-                 10034: (
-                     'TRADE_RETCODE_LIMIT_VOLUME', 'Достигнут лимит на объем ордеров и позиций для данного символа'),
-                 10035: ('TRADE_RETCODE_INVALID_ORDER', 'Неверный или запрещённый тип ордера'),
-                 10036: ('TRADE_RETCODE_POSITION_CLOSED', 'Позиция с указанным POSITION_IDENTIFIER уже закрыта'),
-                 10038: ('TRADE_RETCODE_INVALID_CLOSE_VOLUME', 'Закрываемый объем превышает текущий объем позиции'),
-                 10039: ('TRADE_RETCODE_CLOSE_ORDER_EXIST', 'Для указанной позиции уже есть ордер на закрытие'),
-                 10040: ('TRADE_RETCODE_LIMIT_POSITIONS',
-                         'Количество открытых позиций, которое можно одновременно иметь на счете, '
-                         'может быть ограничено настройками сервера'),
-                 10041: (
-                     'TRADE_RETCODE_REJECT_CANCEL',
-                     'Запрос на активацию отложенного ордера отклонен, а сам ордер отменен'),
-                 10042: (
-                     'TRADE_RETCODE_LONG_ONLY',
-                     'Запрос отклонен, так как на символе установлено правило "Разрешены только '
-                     'длинные позиции"  (POSITION_TYPE_BUY)'),
-                 10043: ('TRADE_RETCODE_SHORT_ONLY',
-                         'Запрос отклонен, так как на символе установлено правило "Разрешены только '
-                         'короткие позиции" (POSITION_TYPE_SELL)'),
-                 10044: ('TRADE_RETCODE_CLOSE_ONLY',
-                         'Запрос отклонен, так как на символе установлено правило "Разрешено только '
-                         'закрывать существующие позиции"'),
-                 10045: ('TRADE_RETCODE_FIFO_CLOSE',
-                         'Запрос отклонен, так как для торгового счета установлено правило "Разрешено '
-                         'закрывать существующие позиции только по правилу FIFO" ('
-                         'ACCOUNT_FIFO_CLOSE=true)'),
-                 10046: (
-                     'TRADE_RETCODE_HEDGE_PROHIBITED',
-                     'Запрос отклонен, так как для торгового счета установлено правило '
-                     '"Запрещено открывать встречные позиции по одному символу"')}
+send_retcodes = {
+    -700: ('CUSTOM_RETCODE_LIMITS_NOT_CHANGED', 'Уровни не изменены'),
+    -600: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сделки не изменен'),
+    -500: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сделки не изменен'),
+    -400: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сделки не изменен'),
+    -300: ('CUSTOM_RETCODE_EQUAL_VOLUME', 'Новый объем сделки равен существующему'),
+    -200: ('CUSTOM_RETCODE_WRONG_SYMBOL', 'Нет такого торгового символа'),
+    -100: ('CUSTOM_RETCODE_NOT_ENOUGH_MARGIN', 'Нехватка маржи. Выбран режим - Не открывать сделку'),
+    10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
+    10006: ('TRADE_RETCODE_REJECT', 'Запрос отклонен'),
+    10007: ('TRADE_RETCODE_CANCEL', 'Запрос отменен трейдером'),
+    10008: ('TRADE_RETCODE_PLACED', 'Ордер размещен'),
+    10009: ('TRADE_RETCODE_DONE', 'Заявка выполнена'),
+    10010: ('TRADE_RETCODE_DONE_PARTIAL', 'Заявка выполнена частично'),
+    10011: ('TRADE_RETCODE_ERROR', 'Ошибка обработки запроса'),
+    10012: ('TRADE_RETCODE_TIMEOUT', 'Запрос отменен по истечению времени'),
+    10013: ('TRADE_RETCODE_INVALID', 'Неправильный запрос'),
+    10014: ('TRADE_RETCODE_INVALID_VOLUME', 'Неправильный объем в запросе'),
+    10015: ('TRADE_RETCODE_INVALID_PRICE', 'Неправильная цена в запросе'),
+    10016: ('TRADE_RETCODE_INVALID_STOPS', 'Неправильные стопы в запросе'),
+    10017: ('TRADE_RETCODE_TRADE_DISABLED', 'Торговля запрещена'),
+    10018: ('TRADE_RETCODE_MARKET_CLOSED', 'Рынок закрыт'),
+    10019: ('TRADE_RETCODE_NO_MONEY', 'Нет достаточных денежных средств для выполнения запроса'),
+    10020: ('TRADE_RETCODE_PRICE_CHANGED', 'Цены изменились'),
+    10021: ('TRADE_RETCODE_PRICE_OFF', 'Отсутствуют котировки для обработки запроса'),
+    10022: ('TRADE_RETCODE_INVALID_EXPIRATION', 'Неверная дата истечения ордера в запросе'),
+    10023: ('TRADE_RETCODE_ORDER_CHANGED', 'Состояние ордера изменилось'),
+    10024: ('TRADE_RETCODE_TOO_MANY_REQUESTS', 'Слишком частые запросы'),
+    10025: ('TRADE_RETCODE_NO_CHANGES', 'В запросе нет изменений'),
+    10026: ('TRADE_RETCODE_SERVER_DISABLES_AT', 'Автотрейдинг запрещен сервером'),
+    10027: ('TRADE_RETCODE_CLIENT_DISABLES_AT', 'Автотрейдинг запрещен клиентским терминалом'),
+    10028: ('TRADE_RETCODE_LOCKED', 'Запрос заблокирован для обработки'),
+    10029: ('TRADE_RETCODE_FROZEN', 'Ордер или позиция заморожены'),
+    10030: ('TRADE_RETCODE_INVALID_FILL', 'Указан неподдерживаемый тип исполнения ордера по остатку'),
+    10031: ('TRADE_RETCODE_CONNECTION', 'Нет соединения с торговым сервером'),
+    10032: ('TRADE_RETCODE_ONLY_REAL', 'Операция разрешена только для реальных счетов'),
+    10033: ('TRADE_RETCODE_LIMIT_ORDERS', 'Достигнут лимит на количество отложенных ордеров'),
+    10034: (
+        'TRADE_RETCODE_LIMIT_VOLUME', 'Достигнут лимит на объем ордеров и позиций для данного символа'),
+    10035: ('TRADE_RETCODE_INVALID_ORDER', 'Неверный или запрещённый тип ордера'),
+    10036: ('TRADE_RETCODE_POSITION_CLOSED', 'Позиция с указанным POSITION_IDENTIFIER уже закрыта'),
+    10038: ('TRADE_RETCODE_INVALID_CLOSE_VOLUME', 'Закрываемый объем превышает текущий объем позиции'),
+    10039: ('TRADE_RETCODE_CLOSE_ORDER_EXIST', 'Для указанной позиции уже есть ордер на закрытие'),
+    10040: ('TRADE_RETCODE_LIMIT_POSITIONS',
+            'Количество открытых позиций, которое можно одновременно иметь на счете, '
+            'может быть ограничено настройками сервера'),
+    10041: (
+        'TRADE_RETCODE_REJECT_CANCEL',
+        'Запрос на активацию отложенного ордера отклонен, а сам ордер отменен'),
+    10042: (
+        'TRADE_RETCODE_LONG_ONLY',
+        'Запрос отклонен, так как на символе установлено правило "Разрешены только '
+        'длинные позиции"  (POSITION_TYPE_BUY)'),
+    10043: ('TRADE_RETCODE_SHORT_ONLY',
+            'Запрос отклонен, так как на символе установлено правило "Разрешены только '
+            'короткие позиции" (POSITION_TYPE_SELL)'),
+    10044: ('TRADE_RETCODE_CLOSE_ONLY',
+            'Запрос отклонен, так как на символе установлено правило "Разрешено только '
+            'закрывать существующие позиции"'),
+    10045: ('TRADE_RETCODE_FIFO_CLOSE',
+            'Запрос отклонен, так как для торгового счета установлено правило "Разрешено '
+            'закрывать существующие позиции только по правилу FIFO" ('
+            'ACCOUNT_FIFO_CLOSE=true)'),
+    10046: (
+        'TRADE_RETCODE_HEDGE_PROHIBITED',
+        'Запрос отклонен, так как для торгового счета установлено правило '
+        '"Запрещено открывать встречные позиции по одному символу"')}
 last_errors = {
     1: ('RES_S_OK', 'generic success'),
     -1: ('RES_E_FAIL', 'generic fail'),
@@ -97,6 +101,7 @@ reasons_code = {
     '06': 'Закрыто инвестором',
     '07': 'Закрыто по условию стоп-лосс',
     '08': 'Объем изменен',
+    '09': 'Лимиты изменены',
 }
 
 
@@ -389,7 +394,7 @@ def init_mt(init_data):
     return res
 
 
-def get_lieder_pips_tp(position, price=None):
+def get_pos_pips_tp(position, price=None):
     """Расчет Тейк-профит в пунктах"""
     if price is None:
         price = position.price_open
@@ -399,7 +404,7 @@ def get_lieder_pips_tp(position, price=None):
     return result
 
 
-def get_lieder_pips_sl(position, price=None):
+def get_pos_pips_sl(position, price=None):
     """Расчет Стоп-лосс в пунктах"""
     if price is None:
         price = position.price_open
@@ -851,6 +856,45 @@ def modify_volume_position(position, new_volume):
     return {'retcode': -400}  # Объем сделки не изменен
 
 
+def synchronize_positions_limits(investor):
+    """Изменение уровней ТП и СЛ указанной позиции"""
+    init_mt(investor)
+    for l_pos in lieder_positions:
+        l_tp = get_pos_pips_tp(l_pos)
+        l_sl = get_pos_pips_sl(l_pos)
+        if l_tp > 0 or l_sl > 0:
+            for i_pos in get_investor_positions():
+                request = []
+                new_comment_str = comment = ''
+                if DealComment.is_valid_string(i_pos.comment):
+                    comment = DealComment().set_from_string(i_pos.comment)
+                    comment.reason = '09'
+                    new_comment_str = comment.string()
+                if comment.lieder_ticket == l_pos.ticket:
+                    i_tp = get_pos_pips_tp(i_pos)
+                    i_sl = get_pos_pips_sl(i_pos)
+                    sl_lvl = tp_lvl = 0.0
+                    if i_pos.type == Mt.POSITION_TYPE_BUY:
+                        sl_lvl = i_pos.price_open - l_sl * Mt.symbol_info(i_pos.symbol).point
+                        tp_lvl = i_pos.price_open + l_tp * Mt.symbol_info(i_pos.symbol).point
+                    elif i_pos.type == Mt.POSITION_TYPE_SELL:
+                        sl_lvl = i_pos.price_open + l_sl * Mt.symbol_info(i_pos.symbol).point
+                        tp_lvl = i_pos.price_open - l_tp * Mt.symbol_info(i_pos.symbol).point
+                    if i_tp != l_tp or i_sl != l_sl:
+                        request = {
+                            "action": Mt.TRADE_ACTION_SLTP,
+                            "position": i_pos.ticket,
+                            "symbol": i_pos.symbol,
+                            "sl": sl_lvl,
+                            "tp": tp_lvl,
+                            "magic": MAGIC,
+                            "comment": new_comment_str
+                        }
+                if request:
+                    result = Mt.order_send(request)
+                    print('Лимит изменен:', result)
+
+
 def force_close_all_positions(investor, reason):
     """Принудительное закрытие всех позиций аккаунта"""
     init_res = init_mt(init_data=investor)
@@ -881,6 +925,30 @@ def close_positions_by_lieder(investor):
     for pos in non_existed_positions:
         print('     close position:', pos.comment)
         close_position(investor, pos, reason='06')
+
+
+def correct_volume(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого.
+    try:
+        if "Корректировать объем" in (investor["recovery_model"], investor["buy_hold_model"]):
+            investors_balance = investor['investment_size']
+            global old_investors_balance
+            login = investor.get("login")
+            if login not in old_investors_balance:
+                old_investors_balance[login] = investors_balance
+            if investors_balance != old_investors_balance[login]:
+                lots_qoef = investors_balance / old_investors_balance[login]
+                if lots_qoef != 1.0:
+                    init_mt(investor)
+                    investor_positions = get_investor_positions(only_own=False)
+                    for investor_pos in investor_positions:
+                        min_lot = Mt.symbol_info(investor_pos.symbol).volume_min
+                        decimals = str(min_lot)[::-1].find('.')
+                        new_volume = round(lots_qoef * investor_pos.volume, decimals)
+                        modify_volume_position(position=investor_pos,
+                                               new_volume=new_volume)
+                old_investors_balance[login] = investors_balance
+    except Exception as e:
+        print("Exception in get_new_volume:", e)
 
 
 async def source_setup():
@@ -1099,12 +1167,11 @@ async def execute_investor(investor):
 
     synchronize = True if investor['synchronize_deals'] == 'Да' else False
 
-    if synchronize:
-        # if investor['closed_deal_investor'] == 'Нет' and get_disconnect_change(investor) == 'Enabled':
-        pass
-    else:
-        print(f'\t {investor["login"]} - cинхронизация отключена')
+    synchronize_positions_limits(investor)
+    if not synchronize:
         return
+
+        # if investor['closed_deal_investor'] == 'Нет' and get_disconnect_change(investor) == 'Enabled':
 
     init_res = init_mt(init_data=investor)
     if not init_res:
@@ -1124,14 +1191,16 @@ async def execute_investor(investor):
     #                 modify_volume_position(inv_pos, new_volume=lid_volume)
     print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'])
     # enable_algotrading()
+    correct_volume(investor)
+
     if investor['dcs_access']:
         await execute_conditions(investor=investor)  # проверка условий кейса закрытия
     if investor['dcs_access']:
         await check_stop_limits(investor=investor)  # проверка условий стоп-лосс
     if investor['dcs_access']:
         for pos_lid in lieder_positions:
-            inv_tp = get_lieder_pips_tp(pos_lid)
-            inv_sl = get_lieder_pips_sl(pos_lid)
+            inv_tp = get_pos_pips_tp(pos_lid)
+            inv_sl = get_pos_pips_sl(pos_lid)
             if not is_position_opened(pos_lid, investor):
                 if check_transaction(investor=investor, lieder_position=pos_lid):
                     volume = get_deal_volume(investor, lieder_position=pos_lid,
@@ -1156,11 +1225,9 @@ async def execute_investor(investor):
     # закрытие позиций от лидера
     if (investor['dcs_access'] or  # если сопровождать сделки или доступ есть
             (not investor['dcs_access'] and investor['accompany_transactions'] == 'Да')):
-        # print('----------------')
         close_positions_by_lieder(investor)
 
-
-Mt.shutdown()
+    Mt.shutdown()
 
 
 def get_new_volume(investor):  # Нужно считать для одного инвестора. Потом прогоним для каждого.
