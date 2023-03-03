@@ -1182,8 +1182,9 @@ async def execute_investor(investor):
                     volume = get_deal_volume(investor, lieder_position=pos_lid,
                                              lieder_balance_value=lieder_balance if investor[
                                                                                         'multiplier'] == 'Баланс' else lieder_equity)
+                    decimals = 2
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
-                                                   lot=round(volume), sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
+                                                   lot=round(volume, decimals), sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
                     try:
                         ret_code = response.retcode
                     except:
