@@ -1177,13 +1177,13 @@ async def execute_investor(investor):
             inv_tp = get_pos_pips_tp(pos_lid)
             inv_sl = get_pos_pips_sl(pos_lid)
             if not is_position_opened(pos_lid, investor):
+                ret_code = None
                 if check_transaction(investor=investor, lieder_position=pos_lid):
                     volume = get_deal_volume(investor, lieder_position=pos_lid,
                                              lieder_balance_value=lieder_balance if investor[
                                                                                         'multiplier'] == 'Баланс' else lieder_equity)
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
-                                                   lot=volume, sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
-                    ret_code = None
+                                                   lot=round(volume), sender_ticket=pos_lid.ticket, tp=inv_tp, sl=inv_sl)
                     try:
                         ret_code = response.retcode
                     except:
