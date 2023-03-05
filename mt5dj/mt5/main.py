@@ -16,7 +16,7 @@ send_retcodes = {
     -400: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сделки не изменен'),
     -300: ('CUSTOM_RETCODE_EQUAL_VOLUME', 'Новый объем сделки равен существующему'),
     -200: ('CUSTOM_RETCODE_WRONG_SYMBOL', 'Нет такого торгового символа'),
-    -100: ('CUSTOM_RETCODE_NOT_ENOUGH_MARGIN', 'Нехватка маржи. Выбран режим - Не открывать сделку'),
+    -100: ('CUSTOM_RETCODE_NOT_ENOUGH_MARGIN', 'Нехватка маржи. Выбран режим - Не открывать сделку или Не выбрано'),
     10004: ('TRADE_RETCODE_REQUOTE', 'Реквота'),
     10006: ('TRADE_RETCODE_REJECT', 'Запрос отклонен'),
     10007: ('TRADE_RETCODE_CANCEL', 'Запрос отменен трейдером'),
@@ -168,7 +168,7 @@ class DealComment:
 TIMEOUT_INIT = 10_000  # время ожидания при инициализации терминала (рекомендуемое 60_000 millisecond)
 MAGIC = 9876543210  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
-UTC_OFFSET_TIMEDELTA = datetime.now() - datetime.utcnow()
+# UTC_OFFSET_TIMEDELTA = datetime.now() - datetime.utcnow()
 
 # currency_coefficient = 1
 lieder_balance = 0  # default var
@@ -176,7 +176,7 @@ lieder_equity = 0  # default var
 lieder_positions = []  # default var
 investors_disconnect_store = [[], []]
 old_investors_balance = {}
-start_date = datetime.now().replace(microsecond=0)  # + UTC_OFFSET_TIMEDELTA  # default var
+start_date_utc = datetime.now().replace(microsecond=0)
 trading_event = asyncio.Event()  # init async event
 
 send_messages = True  # отправлять сообщения в базу
@@ -210,7 +210,7 @@ async def check_notification(investor):
 
 
 def set_dummy_data():
-    global send_messages, start_date
+    global send_messages, start_date_utc
     send_messages = False
     investment_size = 1000
     source['lieder'] = {
@@ -273,8 +273,8 @@ def set_dummy_data():
     source['investors'][1]['password'] = 'sbbsapv5'
     source['settings'] = {
         "relevance": True,
-        "update_at": str(start_date),
-        "create_at": str(start_date)
+        "update_at": str(start_date_utc),
+        "create_at": str(start_date_utc)
         # "access": response['access'],
     }
 
@@ -301,7 +301,6 @@ def get_disconnect_change(investor):
             result = 'Enabled'
     if len(investors_disconnect_store[idx]) <= 1:
         result = 'Unchanged'
-    # print(idx, investors_disconnect_store[idx], result)
     return result
 
 
@@ -348,7 +347,6 @@ async def enable_dcs(investor):
 
 
 async def access_starter(investor):
-    # print(investor['dcs_access'], get_disconnect_change(investor))
     if not investor['dcs_access'] and get_disconnect_change(investor) == 'Enabled':
         await enable_dcs(investor)
 
@@ -366,6 +364,20 @@ async def set_comment(comment):
         numb = response['id']
         url = host + f'patch/{numb}/'
         async with session.patch(url=url, data={"comment": comment}) as resp:
+            await resp.json()
+
+
+async def disable_synchronize():
+    if not send_messages:
+        return
+    async with aiohttp.ClientSession() as session:
+        url = host + 'last'
+        response = requests.get(url).json()[0]
+        if not response:
+            return
+        numb = response['id']
+        url = host + f'patch/{numb}/'
+        async with session.patch(url=url, data={"synchronize_deals": 'Нет'}) as resp:
             await resp.json()
 
 
@@ -447,14 +459,11 @@ def is_lieder_position_in_investor(lieder_position):
 
 
 def is_lieder_position_in_investor_history(lieder_position):
-    date_from = start_date + UTC_OFFSET_TIMEDELTA
+    date_from = start_date_utc
     date_to = datetime.today().replace(microsecond=0) + timedelta(days=1)
-    # print(date_from)
     deals = Mt.history_deals_get(date_from, date_to)
     if not deals:
         deals = []
-    # for _ in deals:
-    #     print(datetime.fromtimestamp(_.time))
     result = None
     result_sl = None
     if len(deals) > 0:
@@ -476,9 +485,6 @@ def is_position_opened(lieder_position, investor):
     if is_lieder_position_in_investor(lieder_position=lieder_position):
         return True
     exist_position, closed_by_sl = is_lieder_position_in_investor_history(lieder_position=lieder_position)
-    # if exist_position and closed_by_sl:
-    # print('++++++++', lieder_position.ticket)
-    # print(exist_position, '\n', closed_by_sl)
     if exist_position:
         if not closed_by_sl:
             if investor['closed_deals_myself'] == 'Переоткрывать':
@@ -503,7 +509,7 @@ def get_positions_profit():
 
 def get_history_profit():
     """Расчет прибыли по истории"""
-    date_from = start_date + UTC_OFFSET_TIMEDELTA
+    date_from = start_date_utc
     date_to = datetime.now().replace(microsecond=0) + timedelta(days=1)
     deals = Mt.history_deals_get(date_from, date_to)
     if not deals:
@@ -545,7 +551,7 @@ async def check_stop_limits(investor):
     close_positions = False
     total_profit = history_profit + current_profit
 
-    print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date + UTC_OFFSET_TIMEDELTA,
+    print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date_utc,
           ':', round(total_profit, 2), 'USD')
     # CHECK LOST SIZE FOR CLOSE ALL
     if total_profit < 0:
@@ -560,7 +566,7 @@ async def check_stop_limits(investor):
         if close_positions and len(active_positions) > 0:
             print('     Закрытие всех позиций по условию стоп-лосс')
             await set_comment('Закрытие всех позиций по условию стоп-лосс. Убыток торговли c' + str(
-                start_date.replace(microsecond=0)) + ':' + str(round(total_profit, 2)))
+                start_date_utc.replace(microsecond=0)) + ':' + str(round(total_profit, 2)))
             for act_pos in active_positions:
                 if act_pos.magic == MAGIC:
                     close_position(investor, act_pos, '07')
@@ -613,17 +619,17 @@ def get_currency_coefficient(investor):
     return currency_coefficient
 
 
-def get_time_offset():
-    return -UTC_OFFSET_TIMEDELTA
-    symbol = 'EURUSD'
-    rates = Mt.copy_rates_from_pos(symbol, Mt.TIMEFRAME_M1, 0, 1)
-    # print('-------------', datetime.fromtimestamp(rates[0][0]))
-    if rates:
-        server_time = datetime.fromtimestamp(rates[0][0])
-        current_time = datetime.now().replace(microsecond=0)
-        delta = server_time - current_time
-        return delta  # * 3600
-    return None
+# def get_time_offset():
+#     return datetime
+#     symbol = 'EURUSD'
+#     rates = Mt.copy_rates_from_pos(symbol, Mt.TIMEFRAME_M1, 0, 1)
+#     # print('-------------', datetime.fromtimestamp(rates[0][0]))
+#     if rates:
+#         server_time = datetime.fromtimestamp(rates[0][0])
+#         current_time = datetime.now().replace(microsecond=0)
+#         delta = server_time - current_time
+#         return delta  # * 3600
+#     return None
 
 
 def check_transaction(investor, lieder_position):
@@ -631,8 +637,8 @@ def check_transaction(investor, lieder_position):
     price_refund = True if investor['price_refund'] == 'Да' else False
     if not price_refund:  # если не возврат цены
         timeout = investor['waiting_time'] * 60
-        deal_time = int(lieder_position.time_update - get_time_offset(investor))
-        curr_time = int(datetime.timestamp(datetime.now().replace(microsecond=0)))
+        deal_time = int(lieder_position.time_update - datetime.utcnow().timestamp())  # get_time_offset(investor))
+        curr_time = int(datetime.timestamp(datetime.utcnow().replace(microsecond=0)))
         delta_time = curr_time - deal_time
         if delta_time > timeout:  # если время больше заданного
             # print('Время истекло')
@@ -723,7 +729,7 @@ async def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp
         "type_time": Mt.ORDER_TIME_GTC,
         "type_filling": Mt.ORDER_FILLING_RETURN,
     }
-    checked_request = await edit_volume(investor, request)  # Проверка и расчет объема при недостатке маржи
+    checked_request = await edit_volume_for_margin(investor, request)  # Проверка и расчет объема при недостатке маржи
     if checked_request:
         result = Mt.order_send(checked_request)
         return result
@@ -731,7 +737,7 @@ async def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp
         return {'retcode': -100}
 
 
-async def edit_volume(investor, request):
+async def edit_volume_for_margin(investor, request):
     """Расчет объема при недостатке маржи и проверка на максимальный"""
     init_mt(investor)
     response = Mt.order_check(request)
@@ -744,22 +750,22 @@ async def edit_volume(investor, request):
         if request['volume'] > max_vol:
             await set_comment('Объем сделки больше максимального')
             return request
-
         idx = source['investors'].index(investor)
         if source['investors'][idx]['not_enough_margin'] == 'Минимальный объем':
             request['volume'] = Mt.symbol_info(request['symbol']).volume_min
         elif source['investors'][idx]['not_enough_margin'] == 'Достаточный объем':
-            symbol = request['symbol']
-            info = Mt.symbol_info(symbol)
+            # symbol = request['symbol']
+            # info = Mt.symbol_info(symbol)
             contract_specification = info.trade_contract_size
-            price = Mt.symbol_info_tick(symbol).bid
+            price = Mt.symbol_info_tick(request['symbol']).bid
             lot_price = contract_specification * price
             balance = investor['investment_size'] + get_history_profit() + get_positions_profit()
             # print(balance, '/', lot_price, '=', balance / lot_price)
-            min_lot = Mt.symbol_info(request['symbol']).volume_min
+            min_lot = info.volume_min
             decimals = str(min_lot)[::-1].find('.')
             request['volume'] = round(balance / lot_price, decimals)
-        elif source['investors'][idx]['not_enough_margin'] == 'Не открывать':
+        elif source['investors'][idx]['not_enough_margin'] == 'Не открывать' \
+                or source['investors'][idx]['not_enough_margin'] == 'Не выбрано':
             request = None
     return request
 
@@ -793,14 +799,6 @@ def close_position(investor, position, reason):
     return result
 
 
-# def get_position_pair_volume(investor_position):
-#     volume = 0
-#     for _ in Mt.positions_get():
-#         if _.comment == investor_position.comment:
-#             volume += _.volume
-#     return volume
-
-
 def modify_volume_position(position, new_volume):
     """Изменение указанной позиции"""
     new_comment_str = position.comment
@@ -816,11 +814,14 @@ def modify_volume_position(position, new_volume):
         if _.comment == position.comment:
             total_volume += _.volume
 
+    min_lot = Mt.symbol_info(position.symbol).volume_min
+    decimals = str(min_lot)[::-1].find('.')
+
     if new_volume > total_volume:  # Увеличение объема
         request = {
             "action": Mt.TRADE_ACTION_DEAL,
             "symbol": position.symbol,
-            "volume": new_volume - total_volume,
+            "volume": round(new_volume - total_volume, decimals),
             "type": position.type,
             "price": Mt.symbol_info_tick(
                 position.symbol).bid if position.type == Mt.POSITION_TYPE_SELL else Mt.symbol_info_tick(
@@ -835,7 +836,7 @@ def modify_volume_position(position, new_volume):
         request = {
             "action": Mt.TRADE_ACTION_DEAL,
             "symbol": position.symbol,
-            "volume": position.volume - new_volume,
+            "volume": round(position.volume - new_volume, decimals),
             "type": Mt.ORDER_TYPE_SELL if position.type == Mt.POSITION_TYPE_BUY else Mt.ORDER_TYPE_BUY,
             "position": position.ticket,
             "price": Mt.symbol_info_tick(
@@ -928,7 +929,7 @@ def close_positions_by_lieder(investor):
 
 
 async def source_setup():
-    global start_date, source
+    global start_date_utc, source
     main_source = {}
     url = host + 'last'
     try:
@@ -1045,12 +1046,7 @@ async def source_setup():
             # "access": response['access'],
         }
         prev_date = main_source['settings']['created_at'].split('.')
-        start_date = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S") + UTC_OFFSET_TIMEDELTA
-        # print('prev_date:', prev_date, 'curr:', start_date)
-        # if len(source) > 0:
-        #     print('==========   ', response['access_1'], source['investors'][0]['dcs_access'], ' // ',
-        #           response['access_2'],
-        #           source['investors'][1]['dcs_access'])
+        start_date_utc = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S")
 
     if main_source:
         for _ in main_source['investors']:  # пересчет стартового капитала под валюту счета
@@ -1110,10 +1106,7 @@ async def update_setup():
     global investors_disconnect_store
     while True:
         await source_setup()
-        # if len(source) > 0:
-        # print('------------', source['investors'][0]['disconnect'], source['investors'][0]['dcs_access'], '--',
-        #       source['investors'][1]['disconnect'], source['investors'][1]['dcs_access'])
-        await asyncio.sleep(1)
+        await asyncio.sleep(.5)
 
 
 async def update_lieder_info(sleep=sleep_lieder_update):
@@ -1131,7 +1124,7 @@ async def update_lieder_info(sleep=sleep_lieder_update):
             Mt.shutdown()
             store_change_disconnect_state()  # сохранение Отключился в список
             print(f'\nLIEDER {source["lieder"]["login"]} - {len(lieder_positions)} positions :',
-                  datetime.utcnow().replace(microsecond=0), ' dUTC:', UTC_OFFSET_TIMEDELTA,
+                  datetime.utcnow().replace(microsecond=0),
                   ' Comments:', send_messages)
             trading_event.set()
         await asyncio.sleep(sleep)
@@ -1141,33 +1134,38 @@ async def execute_investor(investor):
     await access_starter(investor)
     await check_notification(investor)
 
-    synchronize = True if investor['synchronize_deals'] == 'Да' else False
-
-    synchronize_positions_limits(investor)
-    if not synchronize:
-        return
-
-        # if investor['closed_deal_investor'] == 'Нет' and get_disconnect_change(investor) == 'Enabled':
+    # if investor['closed_deal_investor'] == 'Нет' and get_disconnect_change(investor) == 'Enabled':
 
     init_res = init_mt(init_data=investor)
-    correct_volume(investor)
     if not init_res:
         await set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
 
-    # if synchronize:   # если "синхронизировать" - подгон объемов существующих позиций инвестора
-    #     for inv_pos in Mt.positions_get():
-    #         if DealComment.is_valid_string(inv_pos.comment):
-    #             comment = DealComment().set_from_string(inv_pos.comment)
-    #             lid_volume = None  # объем родительской позиции
-    #             for lid_pos in lieder_positions:
-    #                 if lid_pos.ticket == comment.lieder_ticket:
-    #                     lid_volume = lid_pos.volume
-    #                     break
-    #             if lid_volume:
-    #                 modify_volume_position(inv_pos, new_volume=lid_volume)
+    synchronize = True if investor['deals_not_opened'] == 'Да' or investor['synchronize_deals'] == 'Да' else False
+    if synchronize:  # если "синхронизировать"
+        synchronize_positions_limits(investor)  # - подгон лимитов позиций
+        for inv_pos in Mt.positions_get():  # - подгон объемов существующих позиций инвестора
+            if DealComment.is_valid_string(inv_pos.comment):
+                comment = DealComment().set_from_string(inv_pos.comment)
+                lid_volume = None  # объем родительской позиции
+                for lid_pos in lieder_positions:
+                    if lid_pos.ticket == comment.lieder_ticket:
+                        lid_volume = lid_pos.volume
+                        break
+                if lid_volume:
+                    modify_volume_position(inv_pos, new_volume=lid_volume)
+        await disable_synchronize()
+
+    init_mt(investor)
     print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'])
     # enable_algotrading()
+
+    # _pos = Mt.positions_get()
+    # for _ in _pos:
+    #     print(_pos.index(_), ' - ', datetime.utcfromtimestamp(_.time), datetime.utcnow())
+
+    correct_volume(investor)
+
     if investor['dcs_access']:
         await execute_conditions(investor=investor)  # проверка условий кейса закрытия
     if investor['dcs_access']:
@@ -1182,14 +1180,12 @@ async def execute_investor(investor):
                     volume = get_deal_volume(investor, lieder_position=pos_lid,
                                              lieder_balance_value=lieder_balance if investor[
                                                                                         'multiplier'] == 'Баланс' else lieder_equity)
-                    # decimals = 2
-                    # volume = abs(round(volume, decimals))
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                                    lot=volume, sender_ticket=pos_lid.ticket,
                                                    tp=inv_tp, sl=inv_sl)
                     try:
                         ret_code = response.retcode
-                    except:
+                    except AttributeError:
                         ret_code = response['retcode']
                 if ret_code:
                     msg = str(investor['login']) + ' ' + send_retcodes[ret_code][1] + ' : ' + str(ret_code)
@@ -1220,8 +1216,9 @@ def correct_volume(investor):
                 if lots_qoef != 1.0:
                     init_mt(investor)
                     investor_positions = get_investor_positions(only_own=False)
-                    decimals = 2
                     for investor_pos in investor_positions:
+                        min_lot = Mt.symbol_info(investor_pos.symbol).volume_min
+                        decimals = str(min_lot)[::-1].find('.')
                         volume = investor_pos.volume
                         new_volume = round(lots_qoef * volume, decimals)
                         modify_volume_position(position=investor_pos,
