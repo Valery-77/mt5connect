@@ -347,6 +347,8 @@ async def enable_dcs(investor):
 
 
 async def access_starter(investor):
+    if investor['blacklist']:
+        return
     if not investor['dcs_access'] and get_disconnect_change(investor) == 'Enabled':
         await enable_dcs(investor)
 
@@ -367,8 +369,8 @@ async def set_comment(comment):
             await resp.json()
 
 
-async def disable_synchronize():
-    if not send_messages:
+async def disable_synchronize(exe_flag=False):
+    if not send_messages or not exe_flag:
         return
     async with aiohttp.ClientSession() as session:
         url = host + 'last'
@@ -385,7 +387,7 @@ async def execute_conditions(investor):
     if investor['blacklist'] == 'Да':  # если в блек листе
         force_close_all_positions(investor, reason='02')
         await disable_dcs(investor)
-    if investor['disconnect'] == 'Да':  # если отключиться
+    if investor['disconnect'] == 'Да':
         await set_comment('Инициатор отключения: ' + investor['shutdown_initiator'])
 
         if get_investors_positions_count(investor=investor, only_own=True) == 0:  # если нет открытых сделок
@@ -479,11 +481,15 @@ def is_lieder_position_in_investor_history(lieder_position):
     return result, result_sl
 
 
-def is_position_opened(lieder_position, investor):
+def is_position_opened(lieder_position, investor, synchronize_flag):
     """Проверка позиции лидера на наличие в списке позиций и истории инвестора"""
     init_mt(init_data=investor)
     if is_lieder_position_in_investor(lieder_position=lieder_position):
         return True
+
+    if synchronize_flag:
+        return False
+
     exist_position, closed_by_sl = is_lieder_position_in_investor_history(lieder_position=lieder_position)
     if exist_position:
         if not closed_by_sl:
@@ -619,19 +625,6 @@ def get_currency_coefficient(investor):
     return currency_coefficient
 
 
-# def get_time_offset():
-#     return datetime
-#     symbol = 'EURUSD'
-#     rates = Mt.copy_rates_from_pos(symbol, Mt.TIMEFRAME_M1, 0, 1)
-#     # print('-------------', datetime.fromtimestamp(rates[0][0]))
-#     if rates:
-#         server_time = datetime.fromtimestamp(rates[0][0])
-#         current_time = datetime.now().replace(microsecond=0)
-#         delta = server_time - current_time
-#         return delta  # * 3600
-#     return None
-
-
 def check_transaction(investor, lieder_position):
     """Проверка открытия позиции"""
     price_refund = True if investor['price_refund'] == 'Да' else False
@@ -668,8 +661,9 @@ def check_transaction(investor, lieder_position):
     return True if res is not None and transaction_plus >= res >= transaction_minus else False  # Проверка на заданные отклонения
 
 
-def get_deal_volume(investor, lieder_position, lieder_balance_value):
+def get_deal_volume(investor, lieder_position):
     """Расчет множителя"""
+    lieder_balance_value = lieder_balance if investor['multiplier'] == 'Баланс' else lieder_equity
     symbol = lieder_position.symbol
     lieder_volume = lieder_position.volume
     multiplier = investor['multiplier_value']
@@ -1134,29 +1128,10 @@ async def execute_investor(investor):
     await access_starter(investor)
     await check_notification(investor)
 
-    # if investor['closed_deal_investor'] == 'Нет' and get_disconnect_change(investor) == 'Enabled':
-
     init_res = init_mt(init_data=investor)
     if not init_res:
         await set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
-
-    synchronize = True if investor['deals_not_opened'] == 'Да' or investor['synchronize_deals'] == 'Да' else False
-    if synchronize:  # если "синхронизировать"
-        synchronize_positions_limits(investor)  # - подгон лимитов позиций
-        for inv_pos in Mt.positions_get():  # - подгон объемов существующих позиций инвестора
-            if DealComment.is_valid_string(inv_pos.comment):
-                comment = DealComment().set_from_string(inv_pos.comment)
-                lid_volume = None  # объем родительской позиции
-                for lid_pos in lieder_positions:
-                    if lid_pos.ticket == comment.lieder_ticket:
-                        lid_volume = lid_pos.volume
-                        break
-                if lid_volume:
-                    modify_volume_position(inv_pos, new_volume=lid_volume)
-        await disable_synchronize()
-
-    init_mt(investor)
     print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'])
     # enable_algotrading()
 
@@ -1171,15 +1146,30 @@ async def execute_investor(investor):
     if investor['dcs_access']:
         await check_stop_limits(investor=investor)  # проверка условий стоп-лосс
     if investor['dcs_access']:
+
+        synchronize = True if investor['deals_not_opened'] == 'Да' or investor['synchronize_deals'] == 'Да' else False
+        if synchronize:  # если "синхронизировать"
+            synchronize_positions_limits(investor)  # - подгон лимитов позиций
+            for inv_pos in Mt.positions_get():  # - подгон объемов существующих позиций инвестора
+                if DealComment.is_valid_string(inv_pos.comment):
+                    comment = DealComment().set_from_string(inv_pos.comment)
+                    lid_volume = None  # объем родительской позиции
+                    for lid_pos in lieder_positions:
+                        if lid_pos.ticket == comment.lieder_ticket:
+                            lid_volume = get_deal_volume(investor, lieder_position=lid_pos)
+                            break
+                    if lid_volume:
+                        modify_volume_position(inv_pos, new_volume=lid_volume)
+        await disable_synchronize(synchronize and investor['deals_not_opened'] != 'Да')
+
+        init_mt(investor)
         for pos_lid in lieder_positions:
             inv_tp = get_pos_pips_tp(pos_lid)
             inv_sl = get_pos_pips_sl(pos_lid)
-            if not is_position_opened(pos_lid, investor):
+            if not is_position_opened(pos_lid, investor, synchronize):
                 ret_code = None
                 if check_transaction(investor=investor, lieder_position=pos_lid):
-                    volume = get_deal_volume(investor, lieder_position=pos_lid,
-                                             lieder_balance_value=lieder_balance if investor[
-                                                                                        'multiplier'] == 'Баланс' else lieder_equity)
+                    volume = get_deal_volume(investor, lieder_position=pos_lid)
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                                    lot=volume, sender_ticket=pos_lid.ticket,
                                                    tp=inv_tp, sl=inv_sl)
