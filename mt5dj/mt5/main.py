@@ -497,8 +497,7 @@ def is_position_opened(lieder_position, investor, synchronize_flag):
                 return False
             elif investor['closed_deals_myself'] == 'Не переоткрывать' and get_disconnect_change(investor) == 'Enabled':
                 return False
-        else:
-            return True
+        return True
     return False
 
 
@@ -1080,18 +1079,18 @@ async def patching_connection_exchange():
     try:
         api_key_expired = source['investors'][0]['api_key_expired']
         no_exchange_connection = source['investors'][0]['no_exchange_connection']
-        comment_json = source['investors'][0]['comment']
+        # comment_json = source['investors'][0]['comment']
+        close_reason = None
         if api_key_expired == "Да":
-            comment = '04'
+            close_reason = '04'
             for investor in source['investors']:
-                force_close_all_positions(investor=investor, reason=comment)
+                force_close_all_positions(investor=investor, reason=close_reason)
         elif no_exchange_connection == 'Да':
-            comment = '05'
+            close_reason = '05'
             for investor in source['investors']:
-                force_close_all_positions(investor=investor, reason=comment)
-        else:
-            comment = comment_json
-        await set_comment(comment=comment)
+                force_close_all_positions(investor=investor, reason=close_reason)
+        if close_reason:
+            await set_comment(comment=reasons_code[close_reason])
     except Exception as e:
         print("Exception in patching_connection_exchange:", e)
 
@@ -1162,10 +1161,10 @@ async def execute_investor(investor):
                         modify_volume_position(inv_pos, new_volume=lid_volume)
         await disable_synchronize(synchronize and investor['deals_not_opened'] != 'Да')
 
-        init_mt(investor)
         for pos_lid in lieder_positions:
             inv_tp = get_pos_pips_tp(pos_lid)
             inv_sl = get_pos_pips_sl(pos_lid)
+            init_mt(investor)
             if not is_position_opened(pos_lid, investor, synchronize):
                 ret_code = None
                 if check_transaction(investor=investor, lieder_position=pos_lid):
