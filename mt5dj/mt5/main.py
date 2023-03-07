@@ -743,10 +743,9 @@ async def edit_volume_for_margin(investor, request):
         if request['volume'] > max_vol:
             await set_comment('Объем сделки больше максимального')
             return request
-        idx = source['investors'].index(investor)
-        if source['investors'][idx]['not_enough_margin'] == 'Минимальный объем':
+        if investor['not_enough_margin'] == 'Минимальный объем':
             request['volume'] = Mt.symbol_info(request['symbol']).volume_min
-        elif source['investors'][idx]['not_enough_margin'] == 'Достаточный объем':
+        elif investor['not_enough_margin'] == 'Достаточный объем':
             # symbol = request['symbol']
             # info = Mt.symbol_info(symbol)
             contract_specification = info.trade_contract_size
@@ -757,8 +756,8 @@ async def edit_volume_for_margin(investor, request):
             min_lot = info.volume_min
             decimals = str(min_lot)[::-1].find('.')
             request['volume'] = round(balance / lot_price, decimals)
-        elif source['investors'][idx]['not_enough_margin'] == 'Не открывать' \
-                or source['investors'][idx]['not_enough_margin'] == 'Не выбрано':
+        elif investor['not_enough_margin'] == 'Не открывать' \
+                or investor['not_enough_margin'] == 'Не выбрано':
             request = None
     return request
 
@@ -1075,20 +1074,15 @@ async def patching_quotes():
             print("Exception in patching_quotes:", e)
 
 
-async def patching_connection_exchange():
+async def check_connection_exchange(investor):
     try:
-        api_key_expired = source['investors'][0]['api_key_expired']
-        no_exchange_connection = source['investors'][0]['no_exchange_connection']
-        # comment_json = source['investors'][0]['comment']
         close_reason = None
-        if api_key_expired == "Да":
+        if investor['api_key_expired'] == "Да":
             close_reason = '04'
-            for investor in source['investors']:
-                force_close_all_positions(investor=investor, reason=close_reason)
-        elif no_exchange_connection == 'Да':
+            force_close_all_positions(investor=investor, reason=close_reason)
+        elif investor['no_exchange_connection'] == 'Да':
             close_reason = '05'
-            for investor in source['investors']:
-                force_close_all_positions(investor=investor, reason=close_reason)
+            force_close_all_positions(investor=investor, reason=close_reason)
         if close_reason:
             await set_comment(comment=reasons_code[close_reason])
     except Exception as e:
@@ -1126,25 +1120,26 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 async def execute_investor(investor):
     await access_starter(investor)
     await check_notification(investor)
+    await check_connection_exchange(investor)
 
     init_res = init_mt(init_data=investor)
     if not init_res:
         await set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
-    print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'])
+    print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'], end='')
     # enable_algotrading()
 
     # _pos = Mt.positions_get()
     # for _ in _pos:
     #     print(_pos.index(_), ' - ', datetime.utcfromtimestamp(_.time), datetime.utcnow())
 
-    correct_volume(investor)
-
     if investor['dcs_access']:
         await execute_conditions(investor=investor)  # проверка условий кейса закрытия
     if investor['dcs_access']:
         await check_stop_limits(investor=investor)  # проверка условий стоп-лосс
     if investor['dcs_access']:
+
+        correct_volume(investor)
 
         synchronize = True if investor['deals_not_opened'] == 'Да' or investor['synchronize_deals'] == 'Да' else False
         if synchronize:  # если "синхронизировать"
@@ -1167,6 +1162,7 @@ async def execute_investor(investor):
             init_mt(investor)
             if not is_position_opened(pos_lid, investor, synchronize):
                 ret_code = None
+                vol = None
                 if check_transaction(investor=investor, lieder_position=pos_lid):
                     volume = get_deal_volume(investor, lieder_position=pos_lid)
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
@@ -1210,8 +1206,9 @@ def correct_volume(investor):
                         decimals = str(min_lot)[::-1].find('.')
                         volume = investor_pos.volume
                         new_volume = round(lots_qoef * volume, decimals)
-                        modify_volume_position(position=investor_pos,
-                                               new_volume=new_volume)
+                        if volume != new_volume:
+                            modify_volume_position(position=investor_pos,
+                                                   new_volume=new_volume)
                 old_investors_balance[login] = investors_balance
     except Exception as e:
         print("Exception in get_new_volume:", e)
@@ -1221,14 +1218,11 @@ async def task_manager():
     while True:
         await trading_event.wait()
 
-        time_now = datetime.now()
-        current_time = time_now.strftime("%H:%M:%S")
-        await patching_connection_exchange()
-        if current_time == "10:00:00":
+        if datetime.now().strftime("%H:%M:%S") == "10:00:00":
             await patching_quotes()
 
         if len(source) > 0:
-            for i, _ in enumerate(source['investors']):
+            for _ in source['investors']:
                 event_loop.create_task(execute_investor(_))
 
         trading_event.clear()
