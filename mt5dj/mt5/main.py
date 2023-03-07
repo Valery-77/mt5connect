@@ -207,6 +207,8 @@ source = {
 async def check_notification(investor):
     if investor['notification'] == 'Да':
         await set_comment('Вы должны оплатить вознаграждение')
+        return True
+    return False
 
 
 def set_dummy_data():
@@ -283,6 +285,7 @@ def store_change_disconnect_state():
     if len(source) > 0:
         for investor in source['investors']:
             index = source['investors'].index(investor)
+            # print('---------------------', index, investor['disconnect'])
             if len(investors_disconnect_store[index]) == 0 or \
                     investor['disconnect'] != investors_disconnect_store[index][-1]:
                 investors_disconnect_store[index].append(investor['disconnect'])
@@ -301,6 +304,7 @@ def get_disconnect_change(investor):
             result = 'Enabled'
     if len(investors_disconnect_store[idx]) <= 1:
         result = 'Unchanged'
+    # print(investors_disconnect_store)
     return result
 
 
@@ -347,8 +351,7 @@ async def enable_dcs(investor):
 
 
 async def access_starter(investor):
-    if investor['blacklist']:
-        return
+    # print(get_disconnect_change(investor))
     if not investor['dcs_access'] and get_disconnect_change(investor) == 'Enabled':
         await enable_dcs(investor)
 
@@ -374,9 +377,10 @@ async def disable_synchronize(exe_flag=False):
         return
     async with aiohttp.ClientSession() as session:
         url = host + 'last'
-        response = requests.get(url).json()[0]
-        if not response:
+        answer = requests.get(url).json()
+        if not answer or len(answer) == 0:
             return
+        response = answer[0]
         numb = response['id']
         url = host + f'patch/{numb}/'
         async with session.patch(url=url, data={"synchronize_deals": 'Нет'}) as resp:
@@ -384,9 +388,9 @@ async def disable_synchronize(exe_flag=False):
 
 
 async def execute_conditions(investor):
-    if investor['blacklist'] == 'Да':  # если в блек листе
-        force_close_all_positions(investor, reason='02')
-        await disable_dcs(investor)
+    # if investor['blacklist'] == 'Да':  # если в блек листе
+    #     force_close_all_positions(investor, reason='02')
+    #     await disable_dcs(investor)
     if investor['disconnect'] == 'Да':
         await set_comment('Инициатор отключения: ' + investor['shutdown_initiator'])
 
@@ -481,14 +485,11 @@ def is_lieder_position_in_investor_history(lieder_position):
     return result, result_sl
 
 
-def is_position_opened(lieder_position, investor, synchronize_flag):
+def is_position_opened(lieder_position, investor):
     """Проверка позиции лидера на наличие в списке позиций и истории инвестора"""
     init_mt(init_data=investor)
     if is_lieder_position_in_investor(lieder_position=lieder_position):
         return True
-
-    if synchronize_flag:
-        return False
 
     exist_position, closed_by_sl = is_lieder_position_in_investor_history(lieder_position=lieder_position)
     if exist_position:
@@ -741,6 +742,7 @@ async def edit_volume_for_margin(investor, request):
         max_vol = info.volume_max
         # min_vol = info.volume_min
         if request['volume'] > max_vol:
+            print(investor['login'], 'Объем сделки больше максимального')
             await set_comment('Объем сделки больше максимального')
             return request
         if investor['not_enough_margin'] == 'Минимальный объем':
@@ -752,9 +754,10 @@ async def edit_volume_for_margin(investor, request):
             price = Mt.symbol_info_tick(request['symbol']).bid
             lot_price = contract_specification * price
             balance = investor['investment_size'] + get_history_profit() + get_positions_profit()
-            # print(balance, '/', lot_price, '=', balance / lot_price)
             min_lot = info.volume_min
             decimals = str(min_lot)[::-1].find('.')
+            print(balance, '/', lot_price, '=', round(balance / lot_price, decimals))
+            exit()
             request['volume'] = round(balance / lot_price, decimals)
         elif investor['not_enough_margin'] == 'Не открывать' \
                 or investor['not_enough_margin'] == 'Не выбрано':
@@ -802,13 +805,15 @@ def modify_volume_position(position, new_volume):
         return {'retcode': -500}  # чужая позиция
 
     total_volume = 0  # вычисление общего объема по связанным позициям
-    for _ in Mt.positions_get():
-        if _.comment == position.comment:
+    for _ in get_investor_positions():
+        pos_comment = DealComment().set_from_string(position.comment)
+        _comment = DealComment().set_from_string(_.comment)
+        if _comment.lieder_ticket == pos_comment.lieder_ticket:
             total_volume += _.volume
 
     min_lot = Mt.symbol_info(position.symbol).volume_min
     decimals = str(min_lot)[::-1].find('.')
-
+    request = None
     if new_volume > total_volume:  # Увеличение объема
         request = {
             "action": Mt.TRADE_ACTION_DEAL,
@@ -824,21 +829,28 @@ def modify_volume_position(position, new_volume):
             "type_time": Mt.ORDER_TIME_GTC,
             "type_filling": Mt.ORDER_FILLING_FOK,
         }
+        result = Mt.order_send(request)
+        return result
     elif new_volume < total_volume:  # Уменьшение объема
-        request = {
-            "action": Mt.TRADE_ACTION_DEAL,
-            "symbol": position.symbol,
-            "volume": round(position.volume - new_volume, decimals),
-            "type": Mt.ORDER_TYPE_SELL if position.type == Mt.POSITION_TYPE_BUY else Mt.ORDER_TYPE_BUY,
-            "position": position.ticket,
-            "price": Mt.symbol_info_tick(
-                position.symbol).bid if position.type == Mt.POSITION_TYPE_BUY else Mt.symbol_info_tick(
-                position.symbol).ask,
-            "deviation": DEVIATION,
-            "magic": MAGIC,
-            "comment": new_comment_str,
-            "type_filling": Mt.ORDER_FILLING_FOK,
-        }
+        for _ in get_investor_positions():
+            pos_comment = DealComment().set_from_string(position.comment)
+            _comment = DealComment().set_from_string(_.comment)
+            if _comment.lieder_ticket == pos_comment.lieder_ticket:
+                if position.volume > new_volume:
+                    request = {
+                        "action": Mt.TRADE_ACTION_DEAL,
+                        "symbol": position.symbol,
+                        "volume": round(total_volume - new_volume, decimals),
+                        "type": Mt.ORDER_TYPE_SELL if position.type == Mt.POSITION_TYPE_BUY else Mt.ORDER_TYPE_BUY,
+                        "position": position.ticket,
+                        "price": Mt.symbol_info_tick(
+                            position.symbol).bid if position.type == Mt.POSITION_TYPE_BUY else Mt.symbol_info_tick(
+                            position.symbol).ask,
+                        "deviation": DEVIATION,
+                        "magic": MAGIC,
+                        "comment": new_comment_str,
+                        "type_filling": Mt.ORDER_FILLING_FOK,
+                    }
     else:
         return {'retcode': -300}  # Новый объем сделки равен существующему
     if request:
@@ -1075,18 +1087,19 @@ async def patching_quotes():
 
 
 async def check_connection_exchange(investor):
+    close_reason = None
     try:
-        close_reason = None
         if investor['api_key_expired'] == "Да":
             close_reason = '04'
-            force_close_all_positions(investor=investor, reason=close_reason)
+            # force_close_all_positions(investor=investor, reason=close_reason)
         elif investor['no_exchange_connection'] == 'Да':
             close_reason = '05'
-            force_close_all_positions(investor=investor, reason=close_reason)
+            # force_close_all_positions(investor=investor, reason=close_reason)
         if close_reason:
             await set_comment(comment=reasons_code[close_reason])
     except Exception as e:
         print("Exception in patching_connection_exchange:", e)
+    return True if close_reason else False
 
 
 async def update_setup():
@@ -1119,8 +1132,20 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 async def execute_investor(investor):
     await access_starter(investor)
-    await check_notification(investor)
-    await check_connection_exchange(investor)
+    if investor['blacklist'] == 'Да':
+        print(investor['login'], 'in blacklist')
+        return
+    if await check_notification(investor):
+        print(investor['login'], 'not pay - notify')
+        return
+    if await check_connection_exchange(investor):
+        print(investor['login'], 'API expired or Disconected')
+        return
+    synchronize = True if investor['deals_not_opened'] == 'Да' or investor['synchronize_deals'] == 'Да' else False
+    if investor['synchronize_deals'] == 'Да':  # если "синхронизировать"
+        await disable_synchronize(synchronize)
+    if not synchronize:
+        return
 
     init_res = init_mt(init_data=investor)
     if not init_res:
@@ -1141,26 +1166,23 @@ async def execute_investor(investor):
 
         correct_volume(investor)
 
-        synchronize = True if investor['deals_not_opened'] == 'Да' or investor['synchronize_deals'] == 'Да' else False
-        if synchronize:  # если "синхронизировать"
-            synchronize_positions_limits(investor)  # - подгон лимитов позиций
-            for inv_pos in Mt.positions_get():  # - подгон объемов существующих позиций инвестора
-                if DealComment.is_valid_string(inv_pos.comment):
-                    comment = DealComment().set_from_string(inv_pos.comment)
-                    lid_volume = None  # объем родительской позиции
-                    for lid_pos in lieder_positions:
-                        if lid_pos.ticket == comment.lieder_ticket:
-                            lid_volume = get_deal_volume(investor, lieder_position=lid_pos)
-                            break
-                    if lid_volume:
-                        modify_volume_position(inv_pos, new_volume=lid_volume)
-        await disable_synchronize(synchronize and investor['deals_not_opened'] != 'Да')
+        synchronize_positions_limits(investor)  # - подгон лимитов позиций
+        # for inv_pos in Mt.positions_get():  # - подгон объемов существующих позиций инвестора
+        #     if DealComment.is_valid_string(inv_pos.comment):
+        #         comment = DealComment().set_from_string(inv_pos.comment)
+        #         lid_volume = None  # объем родительской позиции
+        #         for lid_pos in lieder_positions:
+        #             if lid_pos.ticket == comment.lieder_ticket:
+        #                 lid_volume = get_deal_volume(investor, lieder_position=lid_pos)
+        #                 break
+        #         if lid_volume:
+        #             modify_volume_position(inv_pos, new_volume=lid_volume)
 
         for pos_lid in lieder_positions:
             inv_tp = get_pos_pips_tp(pos_lid)
             inv_sl = get_pos_pips_sl(pos_lid)
             init_mt(investor)
-            if not is_position_opened(pos_lid, investor, synchronize):
+            if not is_position_opened(pos_lid, investor):
                 ret_code = None
                 vol = None
                 if check_transaction(investor=investor, lieder_position=pos_lid):
@@ -1168,10 +1190,11 @@ async def execute_investor(investor):
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                                    lot=volume, sender_ticket=pos_lid.ticket,
                                                    tp=inv_tp, sl=inv_sl)
-                    try:
-                        ret_code = response.retcode
-                    except AttributeError:
-                        ret_code = response['retcode']
+                    if response:
+                        try:
+                            ret_code = response.retcode
+                        except AttributeError:
+                            ret_code = response['retcode']
                 if ret_code:
                     msg = str(investor['login']) + ' ' + send_retcodes[ret_code][1] + ' : ' + str(ret_code)
                     if ret_code != 10009:  # Заявка выполнена
