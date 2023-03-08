@@ -4,7 +4,6 @@ import json
 from datetime import datetime, timedelta
 from math import fabs
 import MetaTrader5 as Mt
-import pytz
 import requests
 from django.core.serializers.json import DjangoJSONEncoder
 
@@ -718,6 +717,8 @@ async def check_stop_limits(investor):
 
 
 def get_currency_coefficient(investor):
+    lid_currency = source['lieder']['currency']
+    inv_currency = investor['currency']
     eurusd = usdrub = eurrub = -1
     eur_rates = Mt.copy_rates_from_pos('EURUSD', Mt.TIMEFRAME_M1, 0, 1)
     # print('---eur--', eur_rates, end='')
@@ -733,32 +734,27 @@ def get_currency_coefficient(investor):
         eurrub = usdrub * eurusd
         # print('    eurrub:', eurrub)
     currency_coefficient = 1
-    account = Mt.account_info()
-    if account:
-        try:
-            account_currency = account.currency
-            if (account_currency == 'USD' and investor['accounts_in_diff_curr'] == "Доллары") or \
-                    (account_currency == 'EUR' and investor['accounts_in_diff_curr'] == "Евро") or \
-                    (account_currency == 'RUB' and investor['accounts_in_diff_curr'] == "Рубли"):
-                currency_coefficient = 1
-            elif account_currency == 'USD':
-                if investor['accounts_in_diff_curr'] == "Евро":
-                    currency_coefficient = 1 / eurusd
-                elif investor['accounts_in_diff_curr'] == "Рубли":
-                    currency_coefficient = usdrub
-            elif account_currency == 'EUR':
-                if investor['accounts_in_diff_curr'] == "Доллары":
-                    currency_coefficient = eurusd
-                elif investor['accounts_in_diff_curr'] == "Рубли":
-                    currency_coefficient = eurrub
-            elif account_currency == 'RUB':
-                if investor['accounts_in_diff_curr'] == "Доллары":
-                    currency_coefficient = 1 / usdrub
-                elif investor['accounts_in_diff_curr'] == "Евро":
-                    currency_coefficient = 1 / eurrub
-        except Exception as e:
-            print(e)
+    try:
+        if lid_currency == inv_currency:
             currency_coefficient = 1
+        elif lid_currency == 'USD':
+            if inv_currency == 'EUR':
+                currency_coefficient = 1 / eurusd
+            elif inv_currency == 'RUB':
+                currency_coefficient = usdrub
+        elif lid_currency == 'EUR':
+            if inv_currency == 'USD':
+                currency_coefficient = eurusd
+            elif inv_currency == 'RUB':
+                currency_coefficient = eurrub
+        elif lid_currency == 'RUB':
+            if inv_currency == 'USD':
+                currency_coefficient = 1 / usdrub
+            elif inv_currency == 'EUR':
+                currency_coefficient = 1 / eurrub
+    except Exception as e:
+        print('Except in get_currency_coefficient()', e)
+        currency_coefficient = 1
     return currency_coefficient
 
 
@@ -1198,10 +1194,19 @@ async def source_setup():
         }
         prev_date = main_source['settings']['created_at'].split('.')
         start_date_utc = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S")
-    if main_source:
-        for _ in main_source['investors']:  # пересчет стартового капитала под валюту счета
-            _['investment_size'] *= get_currency_coefficient(
-                main_source['investors'][main_source['investors'].index(_)])
+
+        init_mt(main_source['lieder'])
+        main_source['lieder']['currency'] = Mt.account_info().currency
+        for _ in main_source['investors']:
+            idx = main_source['investors'].index(_)
+            init_mt(main_source['investors'][idx])
+            main_source['investors'][idx]['currency'] = Mt.account_info().currency
+            main_source['lieder']['currency_coefficient'] = Mt.account_info().currency
+
+    # if main_source:
+    #     for _ in main_source['investors']:  # пересчет стартового капитала под валюту счета
+    #         _['investment_size'] *= get_currency_coefficient(
+    #             main_source['investors'][main_source['investors'].index(_)])
 
     source = main_source.copy()
 
@@ -1220,9 +1225,10 @@ async def update_lieder_info(sleep=sleep_lieder_update):
             lieder_positions = Mt.positions_get()
             # Mt.shutdown()
             store_change_disconnect_state()  # сохранение Отключился в список
-            print(f'\nLIEDER {source["lieder"]["login"]} - {len(lieder_positions)} positions :',
-                  datetime.utcnow().replace(microsecond=0),
-                  ' Comments:', send_messages)
+            print(
+                f'\nLIEDER {source["lieder"]["login"]} [{source["lieder"]["currency"]}] - {len(lieder_positions)} positions :',
+                datetime.utcnow().replace(microsecond=0),
+                ' Comments:', send_messages)
             trading_event.set()
         await asyncio.sleep(sleep)
 
@@ -1248,7 +1254,8 @@ async def execute_investor(investor):
     if not init_res:
         await set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
-    print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'], end='')
+    print(f' - {investor["login"]} [{investor["currency"]}] - {len(Mt.positions_get())} positions. Access:',
+          investor['dcs_access'], end='')
     # enable_algotrading()
 
     # for _ in get_investor_positions():
@@ -1260,8 +1267,8 @@ async def execute_investor(investor):
         await check_stop_limits(investor=investor)  # проверка условий стоп-лосс
     if investor['dcs_access']:
 
-        synchronize_positions_volume(investor)
-        synchronize_positions_limits(investor)  # - подгон лимитов позиций
+        synchronize_positions_volume(investor)  # коррекция объемов позиций
+        synchronize_positions_limits(investor)  # коррекция лимитов позиций
 
         for pos_lid in lieder_positions:
             inv_tp = get_pos_pips_tp(pos_lid)
@@ -1269,9 +1276,13 @@ async def execute_investor(investor):
             init_mt(investor)
             if not is_position_opened(pos_lid, investor):
                 ret_code = None
-                vol = None
                 if check_transaction(investor=investor, lieder_position=pos_lid):
                     volume = multiply_deal_volume(investor, lieder_position=pos_lid)
+
+                    min_lot = Mt.symbol_info(pos_lid.symbol).volume_min
+                    decimals = str(min_lot)[::-1].find('.')
+                    volume = round(volume * get_currency_coefficient(investor), decimals)
+
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                                    lot=volume, sender_ticket=pos_lid.ticket,
                                                    tp=inv_tp, sl=inv_sl)
