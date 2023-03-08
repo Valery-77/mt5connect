@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta
 from math import fabs
 import MetaTrader5 as Mt
+import pytz
 import requests
 from django.core.serializers.json import DjangoJSONEncoder
 
@@ -273,7 +274,8 @@ class LinkedPositions:
                     }
                     result = Mt.order_send(request)
                     print('\t', send_retcodes[result.retcode], ':', result.retcode)
-                    target_volume = round(target_volume - pos.volume, decimals)  # Уменьшить целевой объем на объем закрытой позиции
+                    target_volume = round(target_volume - pos.volume,
+                                          decimals)  # Уменьшить целевой объем на объем закрытой позиции
                 elif pos.volume > target_volume:  # Если объем позиции больше целевого, то закрыть часть позиции
                     print('\t Уменьшение объема. Частичное закрытие позиции', pos.ticket, 'объем:', pos.volume,
                           'на', target_volume)
@@ -300,34 +302,13 @@ class LinkedPositions:
                     break
 
 
-# def get_linked_positions():
-#     stored_ticket = []
-#     result = []
-#     investor_positions = get_investor_positions()
-#     for pos in investor_positions:
-#         lid_ticket = get_positions_lieder_ticket(pos)
-#         if lid_ticket not in stored_ticket:
-#             stored_ticket.append(lid_ticket)
-#         else:
-#             continue
-#         linked_positions = []
-#         for _ in investor_positions:
-#             parent_ticket = get_positions_lieder_ticket(_)
-#             if parent_ticket == lid_ticket:
-#                 linked_positions.append(_)
-#         result.append(linked_positions)
-#     return result
-
-
-TIMEOUT_INIT = 10_000  # время ожидания при инициализации терминала (рекомендуемое 60_000 millisecond)
+TIMEOUT_INIT = 60_000  # время ожидания при инициализации терминала (рекомендуемое 60_000 millisecond)
 MAGIC = 9876543210  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
-# UTC_OFFSET_TIMEDELTA = datetime.now() - datetime.utcnow()
-
-# currency_coefficient = 1
 lieder_balance = 0  # default var
 lieder_equity = 0  # default var
 lieder_positions = []  # default var
+UTC_OFFSET = datetime.now() - datetime.utcnow()
 investors_disconnect_store = [[], []]
 old_investors_balance = {}
 start_date_utc = datetime.now().replace(microsecond=0)
@@ -672,6 +653,8 @@ def get_history_profit():
     date_from = start_date_utc
     date_to = datetime.now().replace(microsecond=0) + timedelta(days=1)
     deals = Mt.history_deals_get(date_from, date_to)
+    # for _ in deals:
+    #     print(datetime.utcfromtimestamp(_.time))
     if not deals:
         deals = []
     result = 0
@@ -815,7 +798,7 @@ def check_transaction(investor, lieder_position):
     return True if res is not None and transaction_plus >= res >= transaction_minus else False  # Проверка на заданные отклонения
 
 
-def get_deal_volume(investor, lieder_position):
+def multiply_deal_volume(investor, lieder_position):
     """Расчет множителя"""
     lieder_balance_value = lieder_balance if investor['multiplier'] == 'Баланс' else lieder_equity
     symbol = lieder_position.symbol
@@ -904,15 +887,18 @@ async def edit_volume_for_margin(investor, request):
         elif investor['not_enough_margin'] == 'Достаточный объем':
             # symbol = request['symbol']
             # info = Mt.symbol_info(symbol)
+            symbol_coefficient = 100 if 'Forex' in info.path else 1
+            shoulder = (1 / investor['investment_size']) * symbol_coefficient
             contract_specification = info.trade_contract_size
             price = Mt.symbol_info_tick(request['symbol']).bid
             lot_price = contract_specification * price
             balance = investor['investment_size'] + get_history_profit() + get_positions_profit()
             min_lot = info.volume_min
             decimals = str(min_lot)[::-1].find('.')
-            print(balance, '/', lot_price, '=', round(balance / lot_price, decimals))
+            print('(', balance, '/', lot_price, ') / ', shoulder, '=',
+                  round((balance / lot_price) / shoulder, decimals))
             # exit()
-            request['volume'] = round(balance / lot_price, decimals)
+            request['volume'] = round((balance / lot_price) / shoulder, decimals)
         elif investor['not_enough_margin'] == 'Не открывать' \
                 or investor['not_enough_margin'] == 'Не выбрано':
             request = None
@@ -948,71 +934,61 @@ def close_position(investor, position, reason):
     return result
 
 
-def modify_position_volume(position, new_volume):
-    """Изменение указанной позиции"""
-    new_comment_str = position.comment
-    if DealComment.is_valid_string(position.comment):
-        comment = DealComment().set_from_string(position.comment)
-        comment.reason = '08'
-        new_comment_str = comment.string()
-    else:
-        return {'retcode': -500}  # чужая позиция
+def force_close_all_positions(investor, reason):
+    """Принудительное закрытие всех позиций аккаунта"""
+    init_res = init_mt(init_data=investor)
+    if init_res:
+        positions = get_investor_positions(only_own=False)
+        if len(positions) > 0:
+            for position in positions:
+                if position.magic == MAGIC and DealComment.is_valid_string(position.comment):
+                    close_position(investor, position, reason=reason)
+        # Mt.shutdown()
 
-    total_volume = 0  # вычисление общего объема по связанным позициям
-    for _ in get_investor_positions():
-        pos_comment = DealComment().set_from_string(position.comment)
-        _comment = DealComment().set_from_string(_.comment)
-        if _comment.lieder_ticket == pos_comment.lieder_ticket:
-            total_volume += _.volume
 
-    min_lot = Mt.symbol_info(position.symbol).volume_min
-    decimals = str(min_lot)[::-1].find('.')
-    request = None
-    if new_volume > total_volume:  # Увеличение объема
-        request = {
-            "action": Mt.TRADE_ACTION_DEAL,
-            "symbol": position.symbol,
-            "volume": round(new_volume - total_volume, decimals),
-            "type": position.type,
-            "price": Mt.symbol_info_tick(
-                position.symbol).bid if position.type == Mt.POSITION_TYPE_SELL else Mt.symbol_info_tick(
-                position.symbol).ask,
-            "deviation": DEVIATION,
-            "magic": MAGIC,
-            "comment": new_comment_str,
-            "type_time": Mt.ORDER_TIME_GTC,
-            "type_filling": Mt.ORDER_FILLING_FOK,
-        }
-        result = Mt.order_send(request)
-        return result
-    elif new_volume < total_volume:  # Уменьшение объема
-        for _ in get_investor_positions():
-            pos_comment = DealComment().set_from_string(position.comment)
-            _comment = DealComment().set_from_string(_.comment)
-            if _comment.lieder_ticket == pos_comment.lieder_ticket:
-                if position.volume > new_volume:
-                    request = {
-                        "action": Mt.TRADE_ACTION_DEAL,
-                        "symbol": position.symbol,
-                        "volume": round(total_volume - new_volume, decimals),
-                        "type": Mt.ORDER_TYPE_SELL if position.type == Mt.POSITION_TYPE_BUY else Mt.ORDER_TYPE_BUY,
-                        "position": position.ticket,
-                        "price": Mt.symbol_info_tick(
-                            position.symbol).bid if position.type == Mt.POSITION_TYPE_BUY else Mt.symbol_info_tick(
-                            position.symbol).ask,
-                        "deviation": DEVIATION,
-                        "magic": MAGIC,
-                        "comment": new_comment_str,
-                        "type_filling": Mt.ORDER_FILLING_FOK,
-                    }
-    else:
-        return {'retcode': -300}  # Новый объем сделки равен существующему
-    if request:
-        if request['type'] == Mt.POSITION_TYPE_BUY and new_volume <= total_volume:
-            return {'retcode': -300}  # Новый объем сделки равен существующему
-        result = Mt.order_send(request)
-        return result
-    return {'retcode': -400}  # Объем сделки не изменен
+def close_positions_by_lieder(investor):
+    """Закрытие позиций инвестора, которые закрылись у лидера"""
+    init_mt(init_data=investor)
+    positions_investor = get_investor_positions()
+    non_existed_positions = []
+    if positions_investor:
+        for ip in positions_investor:
+            position_exist = False
+            for lp in lieder_positions:
+                comment = DealComment().set_from_string(ip.comment)
+                if comment.lieder_ticket == lp.ticket:
+                    position_exist = True
+                    break
+            if not position_exist:
+                non_existed_positions.append(ip)
+    for pos in non_existed_positions:
+        print('     close position:', pos.comment)
+        close_position(investor, pos, reason='06')
+
+
+def synchronize_positions_volume(investor):
+    try:
+        investors_balance = investor['investment_size']
+        global old_investors_balance
+        login = investor.get("login")
+        if login not in old_investors_balance:
+            old_investors_balance[login] = investors_balance
+        if "Корректировать объем" in (investor["recovery_model"], investor["buy_hold_model"]):
+            if investors_balance != old_investors_balance[login]:
+                volume_change_coefficient = investors_balance / old_investors_balance[login]
+                if volume_change_coefficient != 1.0:
+                    init_mt(investor)
+                    investors_positions_table = LinkedPositions.get_linked_positions_table()
+                    for _ in investors_positions_table:
+                        min_lot = Mt.symbol_info(_.symbol).volume_min
+                        decimals = str(min_lot)[::-1].find('.')
+                        volume = _.volume
+                        new_volume = round(volume_change_coefficient * volume, decimals)
+                        if volume != new_volume:
+                            _.modify_volume(new_volume)
+                old_investors_balance[login] = investors_balance
+    except Exception as e:
+        print("Exception in synchronize_positions_volume():", e)
 
 
 def synchronize_positions_limits(investor):
@@ -1054,36 +1030,53 @@ def synchronize_positions_limits(investor):
                     print('Лимит изменен:', result)
 
 
-def force_close_all_positions(investor, reason):
-    """Принудительное закрытие всех позиций аккаунта"""
-    init_res = init_mt(init_data=investor)
-    if init_res:
-        positions = get_investor_positions(only_own=False)
-        if len(positions) > 0:
-            for position in positions:
-                if position.magic == MAGIC and DealComment.is_valid_string(position.comment):
-                    close_position(investor, position, reason=reason)
-        Mt.shutdown()
+async def patching_quotes():
+    utc_to = datetime.combine(datetime.today(), datetime.min.time())
+    utc_from = utc_to - timedelta(days=1)
+    quotes = ['EURUSD', 'USDRUB', 'EURRUB']
+    for i, quote in enumerate(quotes):
+        i = i + 1
+        try:
+            if quote == 'EURRUB':
+                eurusd = Mt.copy_rates_range("EURUSD", Mt.TIMEFRAME_H4, utc_from, utc_to)[-1][4]
+                usdrub = Mt.copy_rates_range("USDRUB", Mt.TIMEFRAME_H4, utc_from, utc_to)[-1][4]
+                data = {"currencies": quote,
+                        "close": eurusd * usdrub}
+            else:
+                data = {"currencies": quote,
+                        "close": Mt.copy_rates_range(quote, Mt.TIMEFRAME_H4, utc_from, utc_to)[-1][4]}
+            payload = json.dumps(data,
+                                 sort_keys=True,
+                                 indent=1,
+                                 cls=DjangoJSONEncoder)
+            headers = {'Content-Type': 'application/json'}
+            patch_url = host + f'update/{i}/'
+            requests.request("PATCH", patch_url, headers=headers, data=payload)
+        except Exception as e:
+            print("Exception in patching_quotes:", e)
 
 
-def close_positions_by_lieder(investor):
-    """Закрытие позиций инвестора, которые закрылись у лидера"""
-    init_mt(init_data=investor)
-    positions_investor = get_investor_positions()
-    non_existed_positions = []
-    if positions_investor:
-        for ip in positions_investor:
-            position_exist = False
-            for lp in lieder_positions:
-                comment = DealComment().set_from_string(ip.comment)
-                if comment.lieder_ticket == lp.ticket:
-                    position_exist = True
-                    break
-            if not position_exist:
-                non_existed_positions.append(ip)
-    for pos in non_existed_positions:
-        print('     close position:', pos.comment)
-        close_position(investor, pos, reason='06')
+async def check_connection_exchange(investor):
+    close_reason = None
+    try:
+        if investor['api_key_expired'] == "Да":
+            close_reason = '04'
+            # force_close_all_positions(investor=investor, reason=close_reason)
+        elif investor['no_exchange_connection'] == 'Да':
+            close_reason = '05'
+            # force_close_all_positions(investor=investor, reason=close_reason)
+        if close_reason:
+            await set_comment(comment=reasons_code[close_reason])
+    except Exception as e:
+        print("Exception in patching_connection_exchange:", e)
+    return True if close_reason else False
+
+
+async def update_setup():
+    global investors_disconnect_store
+    while True:
+        await source_setup()
+        await asyncio.sleep(.5)
 
 
 async def source_setup():
@@ -1205,62 +1198,12 @@ async def source_setup():
         }
         prev_date = main_source['settings']['created_at'].split('.')
         start_date_utc = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S")
-
     if main_source:
         for _ in main_source['investors']:  # пересчет стартового капитала под валюту счета
             _['investment_size'] *= get_currency_coefficient(
                 main_source['investors'][main_source['investors'].index(_)])
 
     source = main_source.copy()
-
-
-async def patching_quotes():
-    utc_to = datetime.combine(datetime.today(), datetime.min.time())
-    utc_from = utc_to - timedelta(days=1)
-    quotes = ['EURUSD', 'USDRUB', 'EURRUB']
-    for i, quote in enumerate(quotes):
-        i = i + 1
-        try:
-            if quote == 'EURRUB':
-                eurusd = Mt.copy_rates_range("EURUSD", Mt.TIMEFRAME_H4, utc_from, utc_to)[-1][4]
-                usdrub = Mt.copy_rates_range("USDRUB", Mt.TIMEFRAME_H4, utc_from, utc_to)[-1][4]
-                data = {"currencies": quote,
-                        "close": eurusd * usdrub}
-            else:
-                data = {"currencies": quote,
-                        "close": Mt.copy_rates_range(quote, Mt.TIMEFRAME_H4, utc_from, utc_to)[-1][4]}
-            payload = json.dumps(data,
-                                 sort_keys=True,
-                                 indent=1,
-                                 cls=DjangoJSONEncoder)
-            headers = {'Content-Type': 'application/json'}
-            patch_url = host + f'update/{i}/'
-            requests.request("PATCH", patch_url, headers=headers, data=payload)
-        except Exception as e:
-            print("Exception in patching_quotes:", e)
-
-
-async def check_connection_exchange(investor):
-    close_reason = None
-    try:
-        if investor['api_key_expired'] == "Да":
-            close_reason = '04'
-            # force_close_all_positions(investor=investor, reason=close_reason)
-        elif investor['no_exchange_connection'] == 'Да':
-            close_reason = '05'
-            # force_close_all_positions(investor=investor, reason=close_reason)
-        if close_reason:
-            await set_comment(comment=reasons_code[close_reason])
-    except Exception as e:
-        print("Exception in patching_connection_exchange:", e)
-    return True if close_reason else False
-
-
-async def update_setup():
-    global investors_disconnect_store
-    while True:
-        await source_setup()
-        await asyncio.sleep(.5)
 
 
 async def update_lieder_info(sleep=sleep_lieder_update):
@@ -1275,7 +1218,7 @@ async def update_lieder_info(sleep=sleep_lieder_update):
             lieder_balance = Mt.account_info().balance
             lieder_equity = Mt.account_info().equity
             lieder_positions = Mt.positions_get()
-            Mt.shutdown()
+            # Mt.shutdown()
             store_change_disconnect_state()  # сохранение Отключился в список
             print(f'\nLIEDER {source["lieder"]["login"]} - {len(lieder_positions)} positions :',
                   datetime.utcnow().replace(microsecond=0),
@@ -1285,12 +1228,6 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
-    # init_mt(investor)
-    # lnk_pos = LinkedPositions.get_linked_positions_table()
-    # for _ in lnk_pos:
-    #     print(_.lieder_ticket,  len(_.positions), _.volume)
-    # return
-
     await access_starter(investor)
     if investor['blacklist'] == 'Да':
         print(investor['login'], 'in blacklist')
@@ -1299,7 +1236,7 @@ async def execute_investor(investor):
         print(investor['login'], 'not pay - notify')
         return
     if await check_connection_exchange(investor):
-        print(investor['login'], 'API expired or Disconected')
+        print(investor['login'], 'API expired or Broker disconnected')
         return
     synchronize = True if investor['deals_not_opened'] == 'Да' or investor['synchronize_deals'] == 'Да' else False
     if investor['synchronize_deals'] == 'Да':  # если "синхронизировать"
@@ -1314,9 +1251,8 @@ async def execute_investor(investor):
     print(f' - {investor["login"]} - {len(Mt.positions_get())} positions. Access:', investor['dcs_access'], end='')
     # enable_algotrading()
 
-    # _pos = Mt.positions_get()
-    # for _ in _pos:
-    #     print(_pos.index(_), ' - ', datetime.utcfromtimestamp(_.time), datetime.utcnow())
+    # for _ in get_investor_positions():
+    #     print('\n', Mt.symbol_info(_.symbol).path)
 
     if investor['dcs_access']:
         await execute_conditions(investor=investor)  # проверка условий кейса закрытия
@@ -1326,16 +1262,6 @@ async def execute_investor(investor):
 
         synchronize_positions_volume(investor)
         synchronize_positions_limits(investor)  # - подгон лимитов позиций
-        # for inv_pos in Mt.positions_get():  # - подгон объемов существующих позиций инвестора
-        #     if DealComment.is_valid_string(inv_pos.comment):
-        #         comment = DealComment().set_from_string(inv_pos.comment)
-        #         lid_volume = None  # объем родительской позиции
-        #         for lid_pos in lieder_positions:
-        #             if lid_pos.ticket == comment.lieder_ticket:
-        #                 lid_volume = get_deal_volume(investor, lieder_position=lid_pos)
-        #                 break
-        #         if lid_volume:
-        #             modify_volume_position(inv_pos, new_volume=lid_volume)
 
         for pos_lid in lieder_positions:
             inv_tp = get_pos_pips_tp(pos_lid)
@@ -1345,7 +1271,7 @@ async def execute_investor(investor):
                 ret_code = None
                 vol = None
                 if check_transaction(investor=investor, lieder_position=pos_lid):
-                    volume = get_deal_volume(investor, lieder_position=pos_lid)
+                    volume = multiply_deal_volume(investor, lieder_position=pos_lid)
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                                    lot=volume, sender_ticket=pos_lid.ticket,
                                                    tp=inv_tp, sl=inv_sl)
@@ -1367,33 +1293,7 @@ async def execute_investor(investor):
             (not investor['dcs_access'] and investor['accompany_transactions'] == 'Да')):
         close_positions_by_lieder(investor)
 
-    Mt.shutdown()
-
-
-def synchronize_positions_volume(investor):
-    try:
-        investors_balance = investor['investment_size']
-        global old_investors_balance
-        login = investor.get("login")
-        if login not in old_investors_balance:
-            old_investors_balance[login] = investors_balance
-        if "Корректировать объем" in (investor["recovery_model"], investor["buy_hold_model"]):
-            if investors_balance != old_investors_balance[login]:
-                volume_change_coefficient = investors_balance / old_investors_balance[login]
-                if volume_change_coefficient != 1.0:
-                    init_mt(investor)
-                    investors_positions_table = LinkedPositions.get_linked_positions_table()
-                    for _ in investors_positions_table:
-                        # print(_.string())
-                        min_lot = Mt.symbol_info(_.symbol).volume_min
-                        decimals = str(min_lot)[::-1].find('.')
-                        volume = _.volume
-                        new_volume = round(volume_change_coefficient * volume, decimals)
-                        if volume != new_volume:
-                            _.modify_volume(new_volume)
-                old_investors_balance[login] = investors_balance
-    except Exception as e:
-        print("Exception in synchronize_positions_volume():", e)
+    # Mt.shutdown()
 
 
 async def task_manager():
