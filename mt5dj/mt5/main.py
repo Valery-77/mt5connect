@@ -631,7 +631,7 @@ def is_position_opened(lieder_position, investor):
         if not closed_by_sl:
             if investor['closed_deals_myself'] == 'Переоткрывать':
                 return False
-            elif investor['closed_deals_myself'] == 'Не переоткрывать' and get_disconnect_change(investor) == 'Enabled':
+            if investor['reconnected'] == 'Переоткрывать' and get_disconnect_change(investor) == 'Enabled':
                 return False
         return True
     return False
