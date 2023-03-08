@@ -113,6 +113,7 @@ class DealComment:
 
     lieder_ticket: int
     reason: str
+    SEPARATOR = '-'
 
     def __init__(self):
         self.lieder_ticket = -1
@@ -121,7 +122,7 @@ class DealComment:
     @staticmethod
     def is_valid_string(string: str):
         if len(string) > 0:
-            sliced = string.split('|')
+            sliced = string.split(DealComment.SEPARATOR)
             if len(sliced) == 2:
                 if sliced[1] not in reasons_code:
                     return False
@@ -136,14 +137,14 @@ class DealComment:
         return True
 
     def string(self):
-        return f'{self.lieder_ticket}|{self.reason}'
+        return f'{self.lieder_ticket}' + DealComment.SEPARATOR + f'{self.reason}'
 
     def obj(self):
         return {'lieder_ticket': self.lieder_ticket, 'reason': self.reason}
 
     def set_from_string(self, string: str):
-        if '|' in string:
-            split_str = string.split('|')
+        if DealComment.SEPARATOR in string:
+            split_str = string.split(DealComment.SEPARATOR)
             lid_str = split_str[0]
             cause = split_str[1]
         elif len(string) > 0:
@@ -165,6 +166,159 @@ class DealComment:
         self.reason = ''
 
 
+class LinkedPositions:
+    lieder_ticket: int
+    positions: list
+    volume: float
+    symbol: str
+    type: int
+
+    def __init__(self, lieder_ticket, investor_positions=None):
+        self.lieder_ticket = lieder_ticket
+        self.positions = []
+        self.symbol = ''
+        self.type = -1
+        if not investor_positions:
+            investor_positions = get_investor_positions()
+        for pos in investor_positions:
+            comment = DealComment().set_from_string(pos.comment)
+            if comment.lieder_ticket == self.lieder_ticket:
+                self.positions.append(pos)
+                if self.symbol == '':
+                    self.symbol = pos.symbol
+                if self.type < 0:
+                    self.type = pos.type
+        volume = 0.0
+        for _ in self.positions:
+            volume += _.volume
+        min_lot = Mt.symbol_info(self.symbol).volume_min
+        decimals = str(min_lot)[::-1].find('.')
+        self.volume = round(volume, decimals)
+
+    @staticmethod
+    def get_positions_lieder_ticket(position):
+        """Получение тикета позиции лидера из позиции инвестора"""
+        if DealComment.is_valid_string(position.comment):
+            comment = DealComment().set_from_string(position.comment)
+            return comment.lieder_ticket
+        return -1
+
+    @staticmethod
+    def get_linked_positions_table():
+        """Получение таблицы позиций инвестора, сгруппированных по тикету позиции лидера"""
+        stored_ticket = []
+        positions_table = []
+        investor_positions = get_investor_positions()
+        for pos in investor_positions:
+            lid_ticket = LinkedPositions.get_positions_lieder_ticket(pos)
+            if lid_ticket not in stored_ticket:
+                stored_ticket.append(lid_ticket)
+                linked_positions = LinkedPositions(lieder_ticket=lid_ticket, investor_positions=investor_positions)
+                positions_table.append(linked_positions)
+        return positions_table
+
+    def string(self):
+        result = "\t"
+        result += self.symbol + ' ' + str(self.lieder_ticket) + ' ' + str(self.volume) + " " + str(len(self.positions))
+        for _ in self.positions:
+            result += '\n\t\t' + str(_)
+        return result
+
+    def modify_volume(self, new_volume):
+        """Изменение объема связанных позиций"""
+        print('  Текущий объем:', self.volume, ' Новый:', new_volume)
+        min_lot = Mt.symbol_info(self.symbol).volume_min
+        decimals = str(min_lot)[::-1].find('.')
+        new_comment = DealComment()
+        new_comment.lieder_ticket = self.lieder_ticket
+        new_comment.reason = '08'
+        new_comment_str = new_comment.string()
+        if new_volume > self.volume:  # Увеличение объема
+            vol = round(new_volume - self.volume, decimals)
+            print('\t Увеличение объема на', vol)
+            request = {
+                "action": Mt.TRADE_ACTION_DEAL,
+                "symbol": self.symbol,
+                "volume": vol,
+                "type": self.type,
+                "price": Mt.symbol_info_tick(
+                    self.symbol).bid if self.type == Mt.POSITION_TYPE_SELL else Mt.symbol_info_tick(self.symbol).ask,
+                "deviation": DEVIATION,
+                "magic": MAGIC,
+                "comment": new_comment_str,
+                "type_time": Mt.ORDER_TIME_GTC,
+                "type_filling": Mt.ORDER_FILLING_FOK,
+            }
+            result = Mt.order_send(request)
+            return result
+        elif new_volume < self.volume:  # Уменьшение объема
+            target_volume = round(self.volume - new_volume, decimals)
+            for pos in reversed(self.positions):
+                if pos.volume <= target_volume:  # Если объем позиции меньше либо равен целевому, то закрыть позицию
+                    print('\t Уменьшение объема. Закрытие позиции', pos.ticket, ' объем:', pos.volume)
+                    request = {
+                        'action': Mt.TRADE_ACTION_DEAL,
+                        'position': pos.ticket,
+                        'symbol': pos.symbol,
+                        'volume': pos.volume,
+                        "type": Mt.ORDER_TYPE_SELL if pos.type == Mt.POSITION_TYPE_BUY else Mt.ORDER_TYPE_BUY,
+                        'price': Mt.symbol_info_tick(
+                            self.symbol).bid if self.type == Mt.POSITION_TYPE_SELL else Mt.symbol_info_tick(
+                            self.symbol).ask,
+                        'deviation': DEVIATION,
+                        'magic:': MAGIC,
+                        'comment': new_comment_str,
+                        'type_tim': Mt.ORDER_TIME_GTC,
+                        'type_filing': Mt.ORDER_FILLING_IOC
+                    }
+                    result = Mt.order_send(request)
+                    print('\t', send_retcodes[result.retcode], ':', result.retcode)
+                    target_volume = round(target_volume - pos.volume, decimals)  # Уменьшить целевой объем на объем закрытой позиции
+                elif pos.volume > target_volume:  # Если объем позиции больше целевого, то закрыть часть позиции
+                    print('\t Уменьшение объема. Частичное закрытие позиции', pos.ticket, 'объем:', pos.volume,
+                          'на', target_volume)
+                    request = {
+                        "action": Mt.TRADE_ACTION_DEAL,
+                        "symbol": pos.symbol,
+                        "volume": target_volume,
+                        "type": Mt.ORDER_TYPE_SELL if pos.type == Mt.POSITION_TYPE_BUY else Mt.ORDER_TYPE_BUY,
+                        "position": pos.ticket,
+                        'price': Mt.symbol_info_tick(
+                            self.symbol).bid if self.type == Mt.POSITION_TYPE_SELL else Mt.symbol_info_tick(
+                            self.symbol).ask,
+                        "deviation": DEVIATION,
+                        "magic": MAGIC,
+                        "comment": new_comment_str,
+                        'type_tim': Mt.ORDER_TIME_GTC,
+                        "type_filling": Mt.ORDER_FILLING_FOK,
+                    }
+                    if target_volume > 0:
+                        result = Mt.order_send(request)
+                        print('\t', send_retcodes[result.retcode], ':', result.retcode)
+                    else:
+                        print('\t Частичное закрытие объема = 0.0')
+                    break
+
+
+# def get_linked_positions():
+#     stored_ticket = []
+#     result = []
+#     investor_positions = get_investor_positions()
+#     for pos in investor_positions:
+#         lid_ticket = get_positions_lieder_ticket(pos)
+#         if lid_ticket not in stored_ticket:
+#             stored_ticket.append(lid_ticket)
+#         else:
+#             continue
+#         linked_positions = []
+#         for _ in investor_positions:
+#             parent_ticket = get_positions_lieder_ticket(_)
+#             if parent_ticket == lid_ticket:
+#                 linked_positions.append(_)
+#         result.append(linked_positions)
+#     return result
+
+
 TIMEOUT_INIT = 10_000  # время ожидания при инициализации терминала (рекомендуемое 60_000 millisecond)
 MAGIC = 9876543210  # идентификатор эксперта
 DEVIATION = 20  # допустимое отклонение цены в пунктах при совершении сделки
@@ -180,7 +334,7 @@ start_date_utc = datetime.now().replace(microsecond=0)
 trading_event = asyncio.Event()  # init async event
 
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update = 1  # пауза для обновления лидера
+sleep_lieder_update = 5  # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -757,7 +911,7 @@ async def edit_volume_for_margin(investor, request):
             min_lot = info.volume_min
             decimals = str(min_lot)[::-1].find('.')
             print(balance, '/', lot_price, '=', round(balance / lot_price, decimals))
-            exit()
+            # exit()
             request['volume'] = round(balance / lot_price, decimals)
         elif investor['not_enough_margin'] == 'Не открывать' \
                 or investor['not_enough_margin'] == 'Не выбрано':
@@ -794,7 +948,7 @@ def close_position(investor, position, reason):
     return result
 
 
-def modify_volume_position(position, new_volume):
+def modify_position_volume(position, new_volume):
     """Изменение указанной позиции"""
     new_comment_str = position.comment
     if DealComment.is_valid_string(position.comment):
@@ -1131,6 +1285,12 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
+    # init_mt(investor)
+    # lnk_pos = LinkedPositions.get_linked_positions_table()
+    # for _ in lnk_pos:
+    #     print(_.lieder_ticket,  len(_.positions), _.volume)
+    # return
+
     await access_starter(investor)
     if investor['blacklist'] == 'Да':
         print(investor['login'], 'in blacklist')
@@ -1164,8 +1324,7 @@ async def execute_investor(investor):
         await check_stop_limits(investor=investor)  # проверка условий стоп-лосс
     if investor['dcs_access']:
 
-        correct_volume(investor)
-
+        synchronize_positions_volume(investor)
         synchronize_positions_limits(investor)  # - подгон лимитов позиций
         # for inv_pos in Mt.positions_get():  # - подгон объемов существующих позиций инвестора
         #     if DealComment.is_valid_string(inv_pos.comment):
@@ -1211,30 +1370,30 @@ async def execute_investor(investor):
     Mt.shutdown()
 
 
-def correct_volume(investor):
+def synchronize_positions_volume(investor):
     try:
+        investors_balance = investor['investment_size']
+        global old_investors_balance
+        login = investor.get("login")
+        if login not in old_investors_balance:
+            old_investors_balance[login] = investors_balance
         if "Корректировать объем" in (investor["recovery_model"], investor["buy_hold_model"]):
-            investors_balance = investor['investment_size']
-            global old_investors_balance
-            login = investor.get("login")
-            if login not in old_investors_balance:
-                old_investors_balance[login] = investors_balance
             if investors_balance != old_investors_balance[login]:
-                lots_qoef = investors_balance / old_investors_balance[login]
-                if lots_qoef != 1.0:
+                volume_change_coefficient = investors_balance / old_investors_balance[login]
+                if volume_change_coefficient != 1.0:
                     init_mt(investor)
-                    investor_positions = get_investor_positions(only_own=False)
-                    for investor_pos in investor_positions:
-                        min_lot = Mt.symbol_info(investor_pos.symbol).volume_min
+                    investors_positions_table = LinkedPositions.get_linked_positions_table()
+                    for _ in investors_positions_table:
+                        # print(_.string())
+                        min_lot = Mt.symbol_info(_.symbol).volume_min
                         decimals = str(min_lot)[::-1].find('.')
-                        volume = investor_pos.volume
-                        new_volume = round(lots_qoef * volume, decimals)
+                        volume = _.volume
+                        new_volume = round(volume_change_coefficient * volume, decimals)
                         if volume != new_volume:
-                            modify_volume_position(position=investor_pos,
-                                                   new_volume=new_volume)
+                            _.modify_volume(new_volume)
                 old_investors_balance[login] = investors_balance
     except Exception as e:
-        print("Exception in get_new_volume:", e)
+        print("Exception in synchronize_positions_volume():", e)
 
 
 async def task_manager():
