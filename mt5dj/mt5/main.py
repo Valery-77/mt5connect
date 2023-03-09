@@ -309,6 +309,7 @@ lieder_equity = 0  # default var
 lieder_positions = []  # default var
 lieder_existed_position_tickets = []  # default var
 UTC_OFFSET = datetime.now() - datetime.utcnow()
+SERVER_DELTA_TIME = timedelta(hours=4)
 investors_disconnect_store = [[], []]
 old_investors_balance = {}
 start_date_utc = datetime.now().replace(microsecond=0)
@@ -316,7 +317,7 @@ trading_event = asyncio.Event()  # init async event
 
 EURUSD = USDRUB = EURRUB = -1
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update = 7  # пауза для обновления лидера
+sleep_lieder_update = 1  # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -601,7 +602,7 @@ def is_lieder_position_in_investor(lieder_position):
 
 
 def is_lieder_position_in_investor_history(lieder_position):
-    date_from = start_date_utc
+    date_from = start_date_utc + SERVER_DELTA_TIME
     date_to = datetime.today().replace(microsecond=0) + timedelta(days=1)
     deals = Mt.history_deals_get(date_from, date_to)
     if not deals:
@@ -651,7 +652,7 @@ def get_positions_profit():
 
 def get_history_profit():
     """Расчет прибыли по истории"""
-    date_from = start_date_utc + UTC_OFFSET
+    date_from = start_date_utc + SERVER_DELTA_TIME
     date_to = datetime.now().replace(microsecond=0) + timedelta(days=1)
     deals = Mt.history_deals_get(date_from, date_to)
 
@@ -659,6 +660,8 @@ def get_history_profit():
     # print('>>>>', start_date_utc, ':', date_from, ' :: ', datetime.fromtimestamp(inf.time))
     # prof = 0
     # for _ in deals:
+    #     if _.profit == 0:
+    #         continue
     #     print(datetime.utcfromtimestamp(_.time), ' ', _.ticket, ' ', _.profit)
     #     prof += _.profit
     # print('>>>>', prof)
@@ -699,9 +702,7 @@ async def check_stop_limits(investor):
         start_balance = 1
     limit_size = investor['stop_value']
     calc_limit_in_percent = True if investor['stop_loss'] == 'Процент' else False
-    # global start_date
     init_mt(investor)
-    # start_date = datetime.now() - get_time_offset()
     history_profit = get_history_profit()
     current_profit = get_positions_profit()
     # SUMM TOTAL PROFIT
@@ -709,10 +710,11 @@ async def check_stop_limits(investor):
         return
     close_positions = False
     total_profit = history_profit + current_profit
-
+    print(f' - {investor["login"]} [{investor["currency"]}] - {len(Mt.positions_get())} positions. Access:',
+          investor['dcs_access'], end='')
     print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date_utc,
           ':', round(total_profit, 2), investor['currency'],
-          '{', current_profit, ':', history_profit, '}')
+          '{curr.', current_profit, ': hst. ' + str(history_profit) + '}')
     # CHECK LOST SIZE FOR CLOSE ALL
     if total_profit < 0:
         if calc_limit_in_percent:
@@ -1302,9 +1304,6 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
-    # init_mt(investor)
-    # print('<<<<<', get_history_profit(), ': ', investor['login'])
-
     await access_starter(investor)
     if investor['blacklist'] == 'Да':
         print(investor['login'], 'in blacklist')
@@ -1325,8 +1324,8 @@ async def execute_investor(investor):
     if not init_res:
         await set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
-    print(f' - {investor["login"]} [{investor["currency"]}] - {len(Mt.positions_get())} positions. Access:',
-          investor['dcs_access'])  # , end='')
+    # print(f' - {investor["login"]} [{investor["currency"]}] - {len(Mt.positions_get())} positions. Access:',
+    #       investor['dcs_access'])  # , end='')
     # enable_algotrading()
 
     # for _ in get_investor_positions():
