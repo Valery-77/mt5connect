@@ -313,8 +313,9 @@ old_investors_balance = {}
 start_date_utc = datetime.now().replace(microsecond=0)
 trading_event = asyncio.Event()  # init async event
 
+EURUSD = USDRUB = EURRUB = -1
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update = 5  # пауза для обновления лидера
+sleep_lieder_update = 1  # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -694,7 +695,7 @@ async def check_stop_limits(investor):
     total_profit = history_profit + current_profit
 
     print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date_utc,
-          ':', round(total_profit, 2), 'USD')
+          ':', round(total_profit, 2), investor['currency'])
     # CHECK LOST SIZE FOR CLOSE ALL
     if total_profit < 0:
         if calc_limit_in_percent:
@@ -717,22 +718,36 @@ async def check_stop_limits(investor):
 
 
 def get_currency_coefficient(investor):
+    global EURUSD, EURRUB, USDRUB
     lid_currency = source['lieder']['currency']
     inv_currency = investor['currency']
     eurusd = usdrub = eurrub = -1
-    eur_rates = Mt.copy_rates_from_pos('EURUSD', Mt.TIMEFRAME_M1, 0, 1)
-    # print('---eur--', eur_rates, end='')
-    if eur_rates:
-        eurusd = eur_rates[0][4]
-        # print('  eurusd:', eurusd)
-    rub_rates = Mt.copy_rates_range("USDRUB", Mt.TIMEFRAME_M1, 0, 1)
-    # print('---rub--', rub_rates, end='')
-    if rub_rates:
-        usdrub = rub_rates[0][4]
-        # print('  usdrub:', usdrub, end='')
-    if eur_rates and rub_rates:
-        eurrub = usdrub * eurusd
-        # print('    eurrub:', eurrub)
+
+    rub_tick = Mt.symbol_info_tick('USDRUB')
+    usdrub = rub_tick.bid
+    eur_tick = Mt.symbol_info_tick('EURUSD')
+    eurusd = eur_tick.bid
+    eurrub = usdrub * eurusd
+
+    # rub_rates = Mt.copy_rates_range("USDRUB", Mt.TIMEFRAME_M1, 0, 1)
+    # # print('---rub--', rub_rates, end='')
+    # if rub_rates:
+    #     usdrub = rub_rates[0][4]
+    #     # print('  usdrub:', usdrub, end='')
+    # eur_rates = Mt.copy_rates_from_pos('EURUSD', Mt.TIMEFRAME_M1, 0, 1)
+    # # print('---eur--', eur_rates, end='')
+    # if eur_rates:
+    #     eurusd = eur_rates[0][4]
+    #     # print('  eurusd:', eurusd)
+    # if eur_rates and rub_rates:
+    #     eurrub = usdrub * eurusd
+    #     # print('    eurrub:', eurrub)
+    if eurusd > 0:
+        EURUSD = eurusd
+    if usdrub > 0:
+        USDRUB = usdrub
+    if eurrub > 0:
+        EURRUB = eurrub
     currency_coefficient = 1
     try:
         if lid_currency == inv_currency:
@@ -755,6 +770,7 @@ def get_currency_coefficient(investor):
     except Exception as e:
         print('Except in get_currency_coefficient()', e)
         currency_coefficient = 1
+    # print(lid_currency + '/' + inv_currency, currency_coefficient)
     return currency_coefficient
 
 
@@ -1227,13 +1243,14 @@ async def update_lieder_info(sleep=sleep_lieder_update):
             store_change_disconnect_state()  # сохранение Отключился в список
             print(
                 f'\nLIEDER {source["lieder"]["login"]} [{source["lieder"]["currency"]}] - {len(lieder_positions)} positions :',
-                datetime.utcnow().replace(microsecond=0),
-                ' Comments:', send_messages)
+                datetime.utcnow().replace(microsecond=0), ' Comments:', send_messages,
+                '\t[ EURUSD', EURUSD, ': USDRUB', USDRUB, ': EURRUB', EURRUB, ']')
             trading_event.set()
         await asyncio.sleep(sleep)
 
 
 async def execute_investor(investor):
+    # get_currency_coefficient(investor)
     await access_starter(investor)
     if investor['blacklist'] == 'Да':
         print(investor['login'], 'in blacklist')
@@ -1282,7 +1299,7 @@ async def execute_investor(investor):
                     min_lot = Mt.symbol_info(pos_lid.symbol).volume_min
                     decimals = str(min_lot)[::-1].find('.')
                     volume = round(volume * get_currency_coefficient(investor), decimals)
-
+                    # print(get_currency_coefficient(investor))
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                                    lot=volume, sender_ticket=pos_lid.ticket,
                                                    tp=inv_tp, sl=inv_sl)
