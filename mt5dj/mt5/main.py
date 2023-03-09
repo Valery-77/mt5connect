@@ -900,7 +900,8 @@ async def edit_volume_for_margin(investor, request):
             # symbol = request['symbol']
             # info = Mt.symbol_info(symbol)
             symbol_coefficient = 100 if 'Forex' in info.path else 1
-            shoulder = (1 / investor['investment_size']) * symbol_coefficient
+            start_mrg = info.margin_initial if info.margin_initial and info.margin_initial > 0 else 1
+            shoulder = 1 / start_mrg * symbol_coefficient
             contract_specification = info.trade_contract_size
             price = Mt.symbol_info_tick(request['symbol']).bid
             lot_price = contract_specification * price
@@ -1212,12 +1213,14 @@ async def source_setup():
         start_date_utc = datetime.strptime(prev_date[0], "%Y-%m-%dT%H:%M:%S")
 
         init_mt(main_source['lieder'])
-        main_source['lieder']['currency'] = Mt.account_info().currency
+        inf = Mt.account_info()
+        main_source['lieder']['currency'] = inf.currency if inf else '-'
         for _ in main_source['investors']:
             idx = main_source['investors'].index(_)
             init_mt(main_source['investors'][idx])
-            main_source['investors'][idx]['currency'] = Mt.account_info().currency
-            main_source['lieder']['currency_coefficient'] = Mt.account_info().currency
+            inf = Mt.account_info()
+            main_source['investors'][idx]['currency'] = inf.currency if inf else '-'
+            # main_source['lieder']['currency_coefficient'] = Mt.account_info().currency
 
     # if main_source:
     #     for _ in main_source['investors']:  # пересчет стартового капитала под валюту счета
