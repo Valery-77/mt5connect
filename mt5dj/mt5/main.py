@@ -725,10 +725,13 @@ def get_currency_coefficient(investor):
     eurusd = usdrub = eurrub = -1
 
     rub_tick = Mt.symbol_info_tick('USDRUB')
-    usdrub = rub_tick.bid
+    if rub_tick:
+        usdrub = rub_tick.bid
     eur_tick = Mt.symbol_info_tick('EURUSD')
-    eurusd = eur_tick.bid
-    eurrub = usdrub * eurusd
+    if eur_tick:
+        eurusd = eur_tick.bid
+    if rub_tick and eur_tick:
+        eurrub = usdrub * eurusd
 
     # rub_rates = Mt.copy_rates_range("USDRUB", Mt.TIMEFRAME_M1, 0, 1)
     # # print('---rub--', rub_rates, end='')
@@ -1332,7 +1335,7 @@ async def execute_investor(investor):
 
                     min_lot = Mt.symbol_info(pos_lid.symbol).volume_min
                     decimals = str(min_lot)[::-1].find('.')
-                    volume = round(volume * get_currency_coefficient(investor), decimals)
+                    volume = round(volume / get_currency_coefficient(investor), decimals)
                     # print(get_currency_coefficient(investor))
                     response = await open_position(investor=investor, symbol=pos_lid.symbol, deal_type=pos_lid.type,
                                                    lot=volume, sender_ticket=pos_lid.ticket,
