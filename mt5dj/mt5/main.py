@@ -714,7 +714,7 @@ async def check_stop_limits(investor):
           investor['dcs_access'], end='')
     print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date_utc,
           ':', round(total_profit, 2), investor['currency'],
-          '{curr.', current_profit, ': hst. ' + str(history_profit) + '}')
+          '{curr.', round(current_profit, 2), ': hst. ' + str(round(history_profit, 2)) + '}')
     # CHECK LOST SIZE FOR CLOSE ALL
     if total_profit < 0:
         if calc_limit_in_percent:
@@ -930,10 +930,11 @@ async def edit_volume_for_margin(investor, request):
             balance = investor['investment_size'] + get_history_profit() + get_positions_profit() - margin
             min_lot = info.volume_min
             decimals = str(min_lot)[::-1].find('.')
-            print('(', balance, '/', lot_price, ') / ', shoulder, '=',
-                  round((balance / lot_price) / shoulder, decimals))
-            # exit()
-            request['volume'] = round((balance / lot_price) / shoulder, decimals)
+            result_vol = round((balance / lot_price) / shoulder, decimals)
+            print('(', balance, '/', lot_price, ') / ', shoulder, '=', result_vol)
+            if result_vol < min_lot:
+                result_vol = max_vol
+            request['volume'] = result_vol
         elif investor['not_enough_margin'] == 'Не открывать' \
                 or investor['not_enough_margin'] == 'Не выбрано':
             request = None
@@ -1297,8 +1298,9 @@ async def update_lieder_info(sleep=sleep_lieder_update):
             store_change_disconnect_state()  # сохранение Отключился в список
             print(
                 f'\nLIEDER {source["lieder"]["login"]} [{source["lieder"]["currency"]}] - {len(lieder_positions)} positions :',
-                datetime.utcnow().replace(microsecond=0), ' Comments:', send_messages,
-                '\t[ EURUSD', EURUSD, ': USDRUB', USDRUB, ': EURRUB', EURRUB, ']')
+                datetime.utcnow().replace(microsecond=0),
+                ' [EURUSD', EURUSD, ': USDRUB', USDRUB, ': EURRUB', str(round(EURRUB, 3)) + ']',
+                ' Comments:', send_messages)
             trading_event.set()
         await asyncio.sleep(sleep)
 
