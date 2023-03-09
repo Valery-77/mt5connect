@@ -307,6 +307,7 @@ DEVIATION = 20  # допустимое отклонение цены в пунк
 lieder_balance = 0  # default var
 lieder_equity = 0  # default var
 lieder_positions = []  # default var
+lieder_existed_position_tickets = []  # default var
 UTC_OFFSET = datetime.now() - datetime.utcnow()
 investors_disconnect_store = [[], []]
 old_investors_balance = {}
@@ -315,7 +316,7 @@ trading_event = asyncio.Event()  # init async event
 
 EURUSD = USDRUB = EURRUB = -1
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update = 1  # пауза для обновления лидера
+sleep_lieder_update = 1 # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -631,8 +632,8 @@ def is_position_opened(lieder_position, investor):
         if not closed_by_sl:
             if investor['closed_deals_myself'] == 'Переоткрывать':
                 return False
-            if investor['reconnected'] == 'Переоткрывать' and get_disconnect_change(investor) == 'Enabled':
-                return False
+            # if investor['reconnected'] == 'Переоткрывать' and get_disconnect_change(investor) == 'Enabled':
+            #     return False
         return True
     return False
 
@@ -1093,7 +1094,7 @@ async def update_setup():
 
 
 async def source_setup():
-    global start_date_utc, source
+    global start_date_utc, source, lieder_existed_position_tickets
     main_source = {}
     url = host + 'last'
     try:
@@ -1221,8 +1222,9 @@ async def source_setup():
             inf = Mt.account_info()
             main_source['investors'][idx]['currency'] = inf.currency if inf else '-'
             # main_source['lieder']['currency_coefficient'] = Mt.account_info().currency
-
-    # if main_source:
+    else:
+        lieder_existed_position_tickets = []
+        # if main_source:
     #     for _ in main_source['investors']:  # пересчет стартового капитала под валюту счета
     #         _['investment_size'] *= get_currency_coefficient(
     #             main_source['investors'][main_source['investors'].index(_)])
@@ -1231,7 +1233,7 @@ async def source_setup():
 
 
 async def update_lieder_info(sleep=sleep_lieder_update):
-    global lieder_balance, lieder_equity, lieder_positions, source
+    global lieder_balance, lieder_equity, lieder_positions, source, lieder_existed_position_tickets
     while True:
         if len(source) > 0:
             init_res = init_mt(init_data=source['lieder'])
@@ -1241,7 +1243,36 @@ async def update_lieder_info(sleep=sleep_lieder_update):
                 continue
             lieder_balance = Mt.account_info().balance
             lieder_equity = Mt.account_info().equity
-            lieder_positions = Mt.positions_get()
+            input_positions = Mt.positions_get()
+
+            if len(lieder_existed_position_tickets) == 0:
+                for _ in input_positions:
+                    lieder_existed_position_tickets.append(_.ticket)
+
+            lieder_positions = []
+            if source['investors'][0]['reconnected'] == 'Не переоткрывать':
+                for _ in input_positions:
+                    if _.ticket not in lieder_existed_position_tickets:
+                        lieder_positions.append(_)
+            else:
+                if len(lieder_existed_position_tickets) > 0:
+                    lieder_existed_position_tickets = []
+                lieder_positions = input_positions
+                # lieder_positions = list(set(input_positions) - set(lieder_existed_position_tickets)) \
+                # else input_positions
+            # print('NEW')
+            # for _ in input_positions:
+            #     print(_)
+            # print('EXIST')
+            # for _ in lieder_existed_position_tickets:
+            #     print(_)
+            # print('RESULT')
+            # for _ in lieder_positions:
+            #     print(_)
+
+            # exit()
+
+
             # Mt.shutdown()
             store_change_disconnect_state()  # сохранение Отключился в список
             print(
