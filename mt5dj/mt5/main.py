@@ -316,7 +316,7 @@ trading_event = asyncio.Event()  # init async event
 
 EURUSD = USDRUB = EURRUB = -1
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update = 1  # пауза для обновления лидера
+sleep_lieder_update = 7  # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -651,13 +651,18 @@ def get_positions_profit():
 
 def get_history_profit():
     """Расчет прибыли по истории"""
-    date_from = start_date_utc
+    date_from = start_date_utc + UTC_OFFSET
     date_to = datetime.now().replace(microsecond=0) + timedelta(days=1)
     deals = Mt.history_deals_get(date_from, date_to)
 
-    print('>>>>', start_date_utc)
-    for _ in deals:
-        print(datetime.utcfromtimestamp(_.time))
+    # inf = Mt.symbol_info_tick('EURUSD')
+    # print('>>>>', start_date_utc, ':', date_from, ' :: ', datetime.fromtimestamp(inf.time))
+    # prof = 0
+    # for _ in deals:
+    #     print(datetime.utcfromtimestamp(_.time), ' ', _.ticket, ' ', _.profit)
+    #     prof += _.profit
+    # print('>>>>', prof)
+
     # exit()
 
     if not deals:
@@ -665,14 +670,20 @@ def get_history_profit():
     result = 0
     own_deals = []
     try:
+        pos_tickets = []
         if len(deals) > 0:
             for pos in deals:
                 if DealComment.is_valid_string(pos.comment):
                     linked_pos = Mt.history_deals_get(position=pos.position_id)
                     for lp in linked_pos:
-                        own_deals.append(lp)
+                        if lp.ticket not in pos_tickets:
+                            # print(linked_pos.index(lp), datetime.utcfromtimestamp(lp.time), ' ', lp.ticket, ' ',
+                            #       lp.profit)
+                            pos_tickets.append(lp.ticket)
+                            own_deals.append(lp)
         if len(own_deals) > 0:
             for pos in own_deals:
+                # print(datetime.utcfromtimestamp(pos.time), ' ', pos.ticket, ' ', pos.profit)
                 if pos.type < 2:
                     result += pos.profit  # + pos.commission
     except Exception as ex:
@@ -700,7 +711,8 @@ async def check_stop_limits(investor):
     total_profit = history_profit + current_profit
 
     print('\t', 'Прибыль' if total_profit >= 0 else 'Убыток', 'торговли c', start_date_utc,
-          ':', round(total_profit, 2), investor['currency'])
+          ':', round(total_profit, 2), investor['currency'],
+          '{', current_profit, ':', history_profit, '}')
     # CHECK LOST SIZE FOR CLOSE ALL
     if total_profit < 0:
         if calc_limit_in_percent:
@@ -1290,9 +1302,8 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
-    init_mt(investor)
-    get_history_profit()
-
+    # init_mt(investor)
+    # print('<<<<<', get_history_profit(), ': ', investor['login'])
 
     await access_starter(investor)
     if investor['blacklist'] == 'Да':
@@ -1315,7 +1326,7 @@ async def execute_investor(investor):
         await set_comment('Ошибка инициализации инвестора ' + str(investor['login']))
         return
     print(f' - {investor["login"]} [{investor["currency"]}] - {len(Mt.positions_get())} positions. Access:',
-          investor['dcs_access'], end='')
+          investor['dcs_access'])  # , end='')
     # enable_algotrading()
 
     # for _ in get_investor_positions():
