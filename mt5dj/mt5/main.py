@@ -316,7 +316,7 @@ trading_event = asyncio.Event()  # init async event
 
 EURUSD = USDRUB = EURRUB = -1
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update = 1 # пауза для обновления лидера
+sleep_lieder_update = 1  # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -654,8 +654,12 @@ def get_history_profit():
     date_from = start_date_utc
     date_to = datetime.now().replace(microsecond=0) + timedelta(days=1)
     deals = Mt.history_deals_get(date_from, date_to)
-    # for _ in deals:
-    #     print(datetime.utcfromtimestamp(_.time))
+
+    print('>>>>', start_date_utc)
+    for _ in deals:
+        print(datetime.utcfromtimestamp(_.time))
+    # exit()
+
     if not deals:
         deals = []
     result = 0
@@ -901,15 +905,15 @@ async def edit_volume_for_margin(investor, request):
         if investor['not_enough_margin'] == 'Минимальный объем':
             request['volume'] = Mt.symbol_info(request['symbol']).volume_min
         elif investor['not_enough_margin'] == 'Достаточный объем':
-            # symbol = request['symbol']
-            # info = Mt.symbol_info(symbol)
+            acc_inf = Mt.account_info()
+            margin = acc_inf.margin if acc_inf else 0
             symbol_coefficient = 100 if 'Forex' in info.path else 1
             start_mrg = info.margin_initial if info.margin_initial and info.margin_initial > 0 else 1
             shoulder = 1 / start_mrg * symbol_coefficient
             contract_specification = info.trade_contract_size
             price = Mt.symbol_info_tick(request['symbol']).bid
             lot_price = contract_specification * price
-            balance = investor['investment_size'] + get_history_profit() + get_positions_profit()
+            balance = investor['investment_size'] + get_history_profit() + get_positions_profit() - margin
             min_lot = info.volume_min
             decimals = str(min_lot)[::-1].find('.')
             print('(', balance, '/', lot_price, ') / ', shoulder, '=',
@@ -1275,7 +1279,6 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
             # exit()
 
-
             # Mt.shutdown()
             store_change_disconnect_state()  # сохранение Отключился в список
             print(
@@ -1287,7 +1290,10 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
-    # get_currency_coefficient(investor)
+    init_mt(investor)
+    get_history_profit()
+
+
     await access_starter(investor)
     if investor['blacklist'] == 'Да':
         print(investor['login'], 'in blacklist')
