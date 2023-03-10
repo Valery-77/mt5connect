@@ -317,7 +317,7 @@ trading_event = asyncio.Event()  # init async event
 
 EURUSD = USDRUB = EURRUB = -1
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update = 1  # пауза для обновления лидера
+sleep_lieder_update = 3  # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -500,9 +500,10 @@ async def set_comment(comment):
         return
     async with aiohttp.ClientSession() as session:
         url = host + 'last'
-        response = requests.get(url).json()[0]
-        if not response:
+        rsp = requests.get(url)
+        if not rsp:
             return
+        response = rsp.json()[0]
         numb = response['id']
         url = host + f'patch/{numb}/'
         async with session.patch(url=url, data={"comment": comment}) as resp:
@@ -895,11 +896,11 @@ async def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp
         "type_filling": Mt.ORDER_FILLING_RETURN,
     }
     checked_request = await edit_volume_for_margin(investor, request)  # Проверка и расчет объема при недостатке маржи
-    if checked_request:
+    if not checked_request:
+        return {'retcode': -100}
+    elif checked_request != 'EMPTY_REQUEST' and checked_request != 'MORE_THAN_MAX_VOLUME':
         result = Mt.order_send(checked_request)
         return result
-    else:
-        return {'retcode': -100}
 
 
 async def edit_volume_for_margin(investor, request):
@@ -907,15 +908,15 @@ async def edit_volume_for_margin(investor, request):
     init_mt(investor)
     response = Mt.order_check(request)
     if not response or len(response) <= 0:
-        return None
+        return 'EMPTY_REQUEST'
     if response.retcode == 10019 or response.retcode == 10014:  # Неправильный объем # Нет достаточных денежных средств для выполнения запроса
         info = Mt.symbol_info(request['symbol'])
         max_vol = info.volume_max
         # min_vol = info.volume_min
         if request['volume'] > max_vol:
-            print(investor['login'], 'Объем сделки больше максимального')
+            print(investor['login'], f'Объем сделки [{request["volume"]}] больше максимального [{max_vol}]. ')
             await set_comment('Объем сделки больше максимального')
-            return request
+            return 'MORE_THAN_MAX_VOLUME'
         if investor['not_enough_margin'] == 'Минимальный объем':
             request['volume'] = Mt.symbol_info(request['symbol']).volume_min
         elif investor['not_enough_margin'] == 'Достаточный объем':
@@ -927,13 +928,16 @@ async def edit_volume_for_margin(investor, request):
             contract_specification = info.trade_contract_size
             price = Mt.symbol_info_tick(request['symbol']).bid
             lot_price = contract_specification * price
-            balance = investor['investment_size'] + get_history_profit() + get_positions_profit() - margin
+            hst_profit = get_history_profit()
+            cur_profit = get_positions_profit()
+            balance = investor['investment_size'] + hst_profit + cur_profit - margin
             min_lot = info.volume_min
             decimals = str(min_lot)[::-1].find('.')
             result_vol = round((balance / lot_price) / shoulder, decimals)
-            print('(', balance, '/', lot_price, ') / ', shoulder, '=', result_vol)
+            print('((' + str(investor['investment_size']), '+', hst_profit, '+', cur_profit, '- ', str(margin) + ')',
+                  '/', lot_price, ') / ', shoulder, '=', result_vol)
             if result_vol < min_lot:
-                result_vol = max_vol
+                result_vol = min_lot
             request['volume'] = result_vol
         elif investor['not_enough_margin'] == 'Не открывать' \
                 or investor['not_enough_margin'] == 'Не выбрано':
