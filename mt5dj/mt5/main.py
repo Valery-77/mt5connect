@@ -10,6 +10,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 # from win32gui import PostMessage, GetAncestor, FindWindow
 
 send_retcodes = {
+    -800: ('CUSTOM_RETCODE_NOT_ENOUGH_MARGIN', 'Уменьшите множитель или увеличите сумму инвестиции'),
     -700: ('CUSTOM_RETCODE_LIMITS_NOT_CHANGED', 'Уровни не изменены'),
     -600: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сделки не изменен'),
     -500: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сделки не изменен'),
@@ -893,19 +894,51 @@ async def open_position(investor, symbol, deal_type, lot, sender_ticket: int, tp
         "magic": MAGIC,
         "comment": comment.string(),
         "type_time": Mt.ORDER_TIME_GTC,
-        "type_filling": Mt.ORDER_FILLING_RETURN,
+        "type_filling": Mt.ORDER_FILLING_FOK,
     }
     checked_request = await edit_volume_for_margin(investor, request)  # Проверка и расчет объема при недостатке маржи
     if not checked_request:
         return {'retcode': -100}
+    elif checked_request == -1:
+        # await set_comment('Уменьшите множитель или увеличите сумму инвестиции')
+        return {'retcode': -800}
     elif checked_request != 'EMPTY_REQUEST' and checked_request != 'MORE_THAN_MAX_VOLUME':
         result = Mt.order_send(checked_request)
         return result
 
 
+def get_own_positions_margin():
+    own_margin = 0
+    no_errors = True
+    own_positions = get_investor_positions(True)
+    total_positions = get_investor_positions(False)
+    if own_positions and total_positions:
+        if len(own_positions) == len(total_positions):
+            info = Mt.account_info()
+            if info:
+                own_margin = info.margin
+            else:
+                no_errors = False
+        else:
+            for pos in total_positions:
+                if DealComment.is_valid_string(pos.comment):
+                    margin = Mt.order_calc_margin(action=pos.action, symbol=pos.symbol, price=pos.price,
+                                                  volume=pos.volume)
+                    if margin:
+                        own_margin += margin
+                    elif no_errors:
+                        no_errors = False
+    else:
+        return own_margin, False
+    return own_margin, no_errors
+
+
 async def edit_volume_for_margin(investor, request):
     """Расчет объема при недостатке маржи и проверка на максимальный"""
     init_mt(investor)
+
+    # print(Mt.symbol_info(request['symbol']).path)
+
     response = Mt.order_check(request)
     if not response or len(response) <= 0:
         return 'EMPTY_REQUEST'
@@ -920,25 +953,28 @@ async def edit_volume_for_margin(investor, request):
         if investor['not_enough_margin'] == 'Минимальный объем':
             request['volume'] = Mt.symbol_info(request['symbol']).volume_min
         elif investor['not_enough_margin'] == 'Достаточный объем':
-            acc_inf = Mt.account_info()
-            margin = acc_inf.margin if acc_inf else 0
-            symbol_coefficient = 100 if 'Forex' in info.path else 1
-            start_mrg = info.margin_initial if info.margin_initial and info.margin_initial > 0 else 1
-            shoulder = 1 / start_mrg * symbol_coefficient
-            contract_specification = info.trade_contract_size
-            price = Mt.symbol_info_tick(request['symbol']).bid
-            lot_price = contract_specification * price
-            hst_profit = get_history_profit()
-            cur_profit = get_positions_profit()
-            balance = investor['investment_size'] + hst_profit + cur_profit - margin
-            min_lot = info.volume_min
-            decimals = str(min_lot)[::-1].find('.')
-            result_vol = round((balance / lot_price) / shoulder, decimals)
-            print('((' + str(investor['investment_size']), '+', hst_profit, '+', cur_profit, '- ', str(margin) + ')',
-                  '/', lot_price, ') / ', shoulder, '=', result_vol)
-            if result_vol < min_lot:
-                result_vol = min_lot
-            request['volume'] = result_vol
+            # acc_inf = Mt.account_info()
+            # margin = acc_inf.margin if acc_inf else 0
+            #
+            # symbol_coefficient = 100 if 'Forex' in info.path else 1
+            # start_mrg = info.margin_initial if info.margin_initial and info.margin_initial > 0 else 1
+            # shoulder = 1 / start_mrg * symbol_coefficient
+            #
+            # contract_specification = info.trade_contract_size
+            # price = Mt.symbol_info_tick(request['symbol']).bid
+            # lot_price = contract_specification * price
+            # hst_profit = get_history_profit()
+            # cur_profit = get_positions_profit()
+            # balance = investor['investment_size'] + hst_profit + cur_profit - margin
+            # min_lot = info.volume_min
+            # decimals = str(min_lot)[::-1].find('.')
+            # result_vol = round((balance / lot_price) / shoulder, decimals)
+            # print('((' + str(investor['investment_size']), '+', hst_profit, '+', cur_profit, '- ', str(margin) + ')',
+            #       '/', lot_price, ') / ', shoulder, '=', result_vol)
+            # if result_vol < min_lot:
+            #     result_vol = min_lot
+            # request['volume'] = result_vol
+            return -1
         elif investor['not_enough_margin'] == 'Не открывать' \
                 or investor['not_enough_margin'] == 'Не выбрано':
             request = None
@@ -1310,6 +1346,11 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
+    # init_mt(investor)
+    # inf = Mt.symbol_info('EURUSD')
+    # print(inf)
+    # exit()
+
     await access_starter(investor)
     if investor['blacklist'] == 'Да':
         print(investor['login'], 'in blacklist')
@@ -1336,6 +1377,7 @@ async def execute_investor(investor):
 
     # for _ in get_investor_positions():
     #     print('\n', Mt.symbol_info(_.symbol).path)
+    # print(Mt.symbol_info('EURUSD').margin_initial)
 
     if investor['dcs_access']:
         await execute_conditions(investor=investor)  # проверка условий кейса закрытия
