@@ -2,7 +2,7 @@ import asyncio
 import aiohttp
 import json
 from datetime import datetime, timedelta
-from math import fabs
+from math import fabs, floor
 import MetaTrader5 as Mt
 import requests
 from django.core.serializers.json import DjangoJSONEncoder
@@ -10,7 +10,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 # from win32gui import PostMessage, GetAncestor, FindWindow
 
 send_retcodes = {
-    -800: ('CUSTOM_RETCODE_NOT_ENOUGH_MARGIN', 'Уменьшите множитель или увеличите сумму инвестиции'),
+    -800: ('CUSTOM_RETCODE_NOT_ENOUGH_MARGIN', 'Уменьшите множитель или увеличьте сумму инвестиции'),
     -700: ('CUSTOM_RETCODE_LIMITS_NOT_CHANGED', 'Уровни не изменены'),
     -600: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сделки не изменен'),
     -500: ('CUSTOM_RETCODE_POSITION_NOT_MODIFIED', 'Объем сделки не изменен'),
@@ -318,7 +318,7 @@ trading_event = asyncio.Event()  # init async event
 
 EURUSD = USDRUB = EURRUB = -1
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update = 3  # пауза для обновления лидера
+sleep_lieder_update =   # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
@@ -697,6 +697,37 @@ def get_history_profit():
     return result
 
 
+def get_lots_for_investment(symbol, investment):
+    # investment = 1259
+    # smb = 'GBPUSD'
+    print(
+        f'\nsymbol: {symbol}')  # currency_base: {Mt.symbol_info(smb).currency_base}  currency_profit: {Mt.symbol_info(smb).currency_profit}  currency_margin: {Mt.symbol_info(smb).currency_margin}')
+    price = Mt.symbol_info_tick(symbol).bid
+    leverage = Mt.account_info().leverage
+    contract = Mt.symbol_info(symbol).trade_contract_size
+
+    min_lot = Mt.symbol_info(symbol).volume_min
+    lot_step = Mt.symbol_info(symbol).volume_step
+    decimals = str(lot_step)[::-1].find('.')
+
+    volume_none_round = (investment * leverage) / (contract * price)
+    # volume = floor((investment * leverage) / (contract * price) / lot_step) * lot_step
+    # print(floor((investment * leverage) / (contract * price) / lot_step), lot_step)
+    # print(f'Неокругленный объем: {volume_none_round}  Округленный объем: {volume}')
+    if volume_none_round < min_lot:
+        volume = 0.0
+    else:
+        volume = round(floor(volume_none_round / lot_step) * lot_step, decimals)
+
+    print(
+        f'Размер инвестиции: {investment}  Курс: {price}  Контракт: {contract}  Плечо: {leverage}  >>  ОБЪЕМ: {volume}')
+
+    # calc_margin = Mt.order_calc_margin(0, symbol, volume, price)
+    # print('Стоимость сделки:', calc_margin,
+    #       f' Остаток: {round(investment - calc_margin, 2)}' if calc_margin else 'Не хватает средств')
+    return volume
+
+
 async def check_stop_limits(investor):
     """Проверка стоп-лимита по проценту либо абсолютному показателю"""
     start_balance = investor['investment_size']
@@ -953,6 +984,11 @@ async def edit_volume_for_margin(investor, request):
         if investor['not_enough_margin'] == 'Минимальный объем':
             request['volume'] = Mt.symbol_info(request['symbol']).volume_min
         elif investor['not_enough_margin'] == 'Достаточный объем':
+            hst_profit = get_history_profit()
+            cur_profit = get_positions_profit()
+            balance = investor['investment_size'] + hst_profit + cur_profit
+            volume = get_lots_for_investment(symbol=request['symbol'], investment=balance)
+            request['volume'] = volume
             # acc_inf = Mt.account_info()
             # margin = acc_inf.margin if acc_inf else 0
             #
@@ -974,7 +1010,8 @@ async def edit_volume_for_margin(investor, request):
             # if result_vol < min_lot:
             #     result_vol = min_lot
             # request['volume'] = result_vol
-            return -1
+
+            # return -1
         elif investor['not_enough_margin'] == 'Не открывать' \
                 or investor['not_enough_margin'] == 'Не выбрано':
             request = None
@@ -1346,11 +1383,6 @@ async def update_lieder_info(sleep=sleep_lieder_update):
 
 
 async def execute_investor(investor):
-    # init_mt(investor)
-    # inf = Mt.symbol_info('EURUSD')
-    # print(inf)
-    # exit()
-
     await access_starter(investor)
     if investor['blacklist'] == 'Да':
         print(investor['login'], 'in blacklist')
@@ -1410,7 +1442,7 @@ async def execute_investor(investor):
                         except AttributeError:
                             ret_code = response['retcode']
                 if ret_code:
-                    msg = str(investor['login']) + ' ' + send_retcodes[ret_code][1] + ' : ' + str(ret_code)
+                    msg = str(investor['login']) + ' ' + send_retcodes[ret_code][1]  # + ' : ' + str(ret_code)
                     if ret_code != 10009:  # Заявка выполнена
                         await set_comment('\t' + msg)
                     print(msg)
