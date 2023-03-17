@@ -318,7 +318,7 @@ trading_event = asyncio.Event()  # init async event
 
 EURUSD = USDRUB = EURRUB = -1
 send_messages = True  # отправлять сообщения в базу
-sleep_lieder_update =   # пауза для обновления лидера
+sleep_lieder_update = 1 # пауза для обновления лидера
 
 host = 'https://my.atimex.io:8000/api/demo_mt5/'
 
